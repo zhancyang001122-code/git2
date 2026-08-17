@@ -1,0 +1,276 @@
+import { createClient } from '@supabase/supabase-js'
+
+const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || '').trim()
+const supabasePublishableKey = String(
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || '',
+).trim()
+
+export const internalAccountUsername = '内部账户1'
+export const internalAccountEmail = String(
+  import.meta.env.VITE_INTERNAL_ACCOUNT_EMAIL || 'internal-account-1@archflow.local',
+).trim()
+
+export const isSupabaseConfigured = Boolean(supabaseUrl && supabasePublishableKey)
+
+export const supabase = isSupabaseConfigured
+  ? createClient(supabaseUrl, supabasePublishableKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: false,
+      },
+    })
+  : null
+
+function requireClient() {
+  if (!supabase) throw new Error('云端项目尚未完成部署配置，请稍后再试。')
+  return supabase
+}
+
+function unwrap({ data, error }) {
+  if (error) throw error
+  return data
+}
+
+function formatMemoTime(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '刚刚'
+  const pad = (number) => String(number).padStart(2, '0')
+  return `${pad(date.getMonth() + 1)} 月 ${pad(date.getDate())} 日 ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function formatAssetTime(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '刚刚保存'
+  const pad = (number) => String(number).padStart(2, '0')
+  return `${pad(date.getMonth() + 1)} 月 ${pad(date.getDate())} 日`
+}
+
+function mapMemo(row) {
+  return {
+    id: row.id,
+    text: row.content,
+    time: formatMemoTime(row.updated_at || row.created_at),
+    createdAt: row.created_at,
+  }
+}
+
+async function signedArtifact(artifact) {
+  if (!artifact?.storagePath) return artifact
+  const client = requireClient()
+  const { data, error } = await client.storage.from('user-assets').createSignedUrl(artifact.storagePath, 60 * 60)
+  if (error) throw error
+  return { ...artifact, imageUrl: data.signedUrl }
+}
+
+async function mapAsset(row) {
+  const artifacts = await Promise.all((row.artifacts || []).slice(0, 3).map(signedArtifact))
+  return {
+    id: row.id,
+    title: row.title,
+    type: row.asset_type,
+    files: row.file_count,
+    time: formatAssetTime(row.updated_at || row.created_at),
+    source: row.source,
+    tone: row.tone,
+    artifacts,
+    resultData: row.result_data,
+    sessionOnly: false,
+    persistent: true,
+  }
+}
+
+async function currentUser() {
+  const client = requireClient()
+  const { data, error } = await client.auth.getUser()
+  if (error) throw error
+  if (!data.user) throw new Error('登录状态已失效，请重新登录。')
+  return data.user
+}
+
+export async function getCurrentSession() {
+  if (!supabase) return null
+  const { data, error } = await supabase.auth.getSession()
+  if (error) throw error
+  return data.session
+}
+
+export function subscribeToAuth(callback) {
+  if (!supabase) return () => {}
+  const { data } = supabase.auth.onAuthStateChange((_event, session) => callback(session))
+  return () => data.subscription.unsubscribe()
+}
+
+export async function signInInternalAccount(username, password) {
+  const normalizedUsername = username.trim()
+  if (normalizedUsername !== internalAccountUsername) throw new Error('账号或密码不正确。')
+  const client = requireClient()
+  const { data, error } = await client.auth.signInWithPassword({
+    email: internalAccountEmail,
+    password,
+  })
+  if (error) throw new Error(error.message === 'Invalid login credentials' ? '账号或密码不正确。' : error.message)
+  return data.session
+}
+
+export async function signOutInternalAccount() {
+  const client = requireClient()
+  unwrap(await client.auth.signOut())
+}
+
+export async function loadInternalWorkspace() {
+  const client = requireClient()
+  const [memoRows, assetRows] = await Promise.all([
+    unwrap(await client.from('memos').select('*').order('created_at', { ascending: false })),
+    unwrap(await client.from('assets').select('*').order('created_at', { ascending: false })),
+  ])
+  return {
+    memos: memoRows.map(mapMemo),
+    assets: await Promise.all(assetRows.map(mapAsset)),
+  }
+}
+
+export async function insertMemo(content) {
+  const user = await currentUser()
+  const client = requireClient()
+  const row = unwrap(await client.from('memos').insert({ user_id: user.id, content }).select().single())
+  return mapMemo(row)
+}
+
+export async function updateMemo(id, content) {
+  const client = requireClient()
+  const row = unwrap(await client.from('memos').update({ content }).eq('id', id).select().single())
+  return mapMemo(row)
+}
+
+function extensionForBlob(blob) {
+  if (blob.type === 'image/jpeg') return 'jpg'
+  if (blob.type === 'image/webp') return 'webp'
+  return 'png'
+}
+
+async function imageUrlToBlob(imageUrl) {
+  const response = await fetch(imageUrl)
+  if (!response.ok) throw new Error(`生成图读取失败（${response.status}）`)
+  return response.blob()
+}
+
+function safeFileName(value) {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'generated-image'
+}
+
+export async function persistAsset(asset) {
+  const user = await currentUser()
+  const client = requireClient()
+  const packageId = crypto.randomUUID()
+  const uploadedPaths = []
+
+  try {
+    const artifacts = []
+    for (const [index, artifact] of (asset.artifacts || []).entries()) {
+      if (!artifact.imageUrl) continue
+      const blob = await imageUrlToBlob(artifact.imageUrl)
+      const baseName = safeFileName(artifact.name || `generated-${index + 1}`)
+      const objectPath = `${user.id}/${packageId}/${baseName.replace(/\.[^.]+$/, '')}.${extensionForBlob(blob)}`
+      unwrap(await client.storage.from('user-assets').upload(objectPath, blob, {
+        contentType: blob.type || 'image/png',
+        upsert: false,
+      }))
+      uploadedPaths.push(objectPath)
+      artifacts.push({
+        id: artifact.id || index + 1,
+        name: artifact.name || `generated-${index + 1}.${extensionForBlob(blob)}`,
+        title: artifact.title || '生成图像',
+        meta: artifact.meta || 'ArchFlow 真实生成',
+        storagePath: objectPath,
+      })
+    }
+
+    const row = unwrap(await client.from('assets').insert({
+      user_id: user.id,
+      title: asset.title,
+      asset_type: asset.type,
+      file_count: artifacts.length || asset.files,
+      source: asset.source,
+      tone: asset.tone,
+      artifacts,
+      result_data: stripLargeImagePayload(asset.resultData),
+    }).select().single())
+    return mapAsset(row)
+  } catch (error) {
+    if (uploadedPaths.length) await client.storage.from('user-assets').remove(uploadedPaths)
+    throw error
+  }
+}
+
+export async function deletePersistentAsset(asset) {
+  const client = requireClient()
+  const paths = (asset.artifacts || []).map((item) => item.storagePath).filter(Boolean)
+  if (paths.length) unwrap(await client.storage.from('user-assets').remove(paths))
+  unwrap(await client.from('assets').delete().eq('id', asset.id))
+}
+
+function stripLargeImagePayload(result) {
+  if (!result) return null
+  const { fileNames: _fileNames, originalImageUrl, images = [], ...rest } = result
+  return {
+    ...rest,
+    originalImageUrl: originalImageUrl ? '[session-only-upload-removed]' : undefined,
+    images: images.map(({ imageUrl: _imageUrl, ...image }) => image),
+  }
+}
+
+export async function recordGeneration({ feature, prompt, result }) {
+  const user = await currentUser()
+  const client = requireClient()
+  unwrap(await client.from('generation_history').insert({
+    user_id: user.id,
+    feature_id: feature,
+    prompt,
+    file_names: [],
+    result_data: stripLargeImagePayload(result),
+  }))
+}
+
+function fileToAttachment(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error(`无法读取 ${file.name}`))
+    reader.onload = () => {
+      const [, data = ''] = String(reader.result).split(',', 2)
+      resolve({ name: file.name, mimeType: file.type || 'application/octet-stream', data })
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
+export async function generateWithCloudApi({ feature, prompt, files = [], options = {} }) {
+  const client = requireClient()
+  const imageFiles = files.filter((file) => file.type?.startsWith('image/')).slice(0, 1)
+  const attachments = await Promise.all(imageFiles.map(fileToAttachment))
+  const { data, error } = await client.functions.invoke('generate', {
+    body: {
+      action: 'generate',
+      feature,
+      prompt,
+      fileNames: files.map((file) => file.name),
+      attachments,
+      imageSlot: options.imageSlot || 'image1',
+    },
+  })
+  if (error) throw new Error(error.message || '云端生成服务调用失败。')
+  if (data?.error) throw new Error(data.error)
+  return data
+}
+
+export async function getCloudCapabilities() {
+  const client = requireClient()
+  const { data, error } = await client.functions.invoke('generate', { body: { action: 'capabilities' } })
+  if (error) throw error
+  if (data?.error) throw new Error(data.error)
+  return {
+    languageReady: Boolean(data?.languageReady),
+    languageModel: data?.languageModel || '',
+    imageModes: data?.imageModes || [],
+  }
+}

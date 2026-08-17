@@ -39,9 +39,29 @@ import {
   ZoomOut,
 } from 'lucide-react'
 import { checkModelConnection, createAssetRecord, features, generateWithApi, getConfiguredImageModes, initialAssets, modelProviders, navItems, outputMeta, resolveModelConnection } from './data.js'
+import {
+  deletePersistentAsset,
+  generateWithCloudApi,
+  getCloudCapabilities,
+  getCurrentSession,
+  insertMemo,
+  internalAccountUsername,
+  isSupabaseConfigured,
+  loadInternalWorkspace,
+  persistAsset,
+  recordGeneration,
+  signInInternalAccount,
+  signOutInternalAccount,
+  subscribeToAuth,
+  updateMemo,
+} from './lib/supabase.js'
 
 const validRoutes = new Set(navItems.map((item) => item.id))
 const sidebarNavItems = navItems.filter((item) => item.id !== 'home')
+const demoMemos = [
+  { id: 2, text: '周五前完成 A / B / C 方案比选，准备甲方沟通版。', time: '今天 10:20' },
+  { id: 1, text: '确认滨水入口雨棚净高，与结构顾问同步 4.8m 控制线。', time: '今天 09:35' },
+]
 
 function getInitialRoute() {
   const hash = window.location.hash.replace('#/', '')
@@ -75,6 +95,11 @@ export default function App() {
   const [route, setRoute] = useState(getInitialRoute)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [assets, setAssets] = useState(initialAssets)
+  const [memos, setMemos] = useState(demoMemos)
+  const [session, setSession] = useState(null)
+  const [authReady, setAuthReady] = useState(!isSupabaseConfigured)
+  const [syncState, setSyncState] = useState('guest')
+  const [managedModels, setManagedModels] = useState({ languageReady: false, languageModel: '', imageModes: [] })
   const [dialog, setDialog] = useState(null)
   const [toast, setToast] = useState(null)
   const [imageModes, setImageModes] = useState(getConfiguredImageModes)
@@ -95,6 +120,54 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    let active = true
+    getCurrentSession()
+      .then((currentSession) => active && setSession(currentSession))
+      .catch(() => active && setSession(null))
+      .finally(() => active && setAuthReady(true))
+    const unsubscribe = subscribeToAuth((nextSession) => {
+      if (!active) return
+      setSession(nextSession)
+      setAuthReady(true)
+    })
+    return () => {
+      active = false
+      unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    if (!session) {
+      setAssets(initialAssets)
+      setMemos(demoMemos)
+      setSyncState('guest')
+      setManagedModels({ languageReady: false, languageModel: '', imageModes: [] })
+      setImageModes(getConfiguredImageModes())
+      return () => { active = false }
+    }
+
+    setSyncState('loading')
+    Promise.all([loadInternalWorkspace(), getCloudCapabilities()])
+      .then(([workspace, capabilities]) => {
+        if (!active) return
+        setAssets(workspace.assets)
+        setMemos(workspace.memos)
+        setImageModes(capabilities.imageModes.length ? capabilities.imageModes : [{ id: 'image1', label: '内置生图 API 1', model: '等待服务端配置' }])
+        setManagedModels(capabilities)
+        setSyncState('ready')
+      })
+      .catch((error) => {
+        if (!active) return
+        setAssets([])
+        setMemos([])
+        setSyncState('error')
+        setToast({ title: '云端工作区加载失败', detail: error instanceof Error ? error.message : '请稍后重新登录。' })
+      })
+    return () => { active = false }
+  }, [session])
+
+  useEffect(() => {
     if (!toast) return undefined
     const timer = window.setTimeout(() => setToast(null), 3200)
     return () => window.clearTimeout(timer)
@@ -107,16 +180,66 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const saveAsset = (feature, prompt, result) => {
-    const asset = createAssetRecord(feature, prompt, result)
-    setAssets((current) => [asset, ...current])
-    setToast({ title: '已保存到我的资产', detail: asset.sessionOnly ? `${asset.title} · 生成图可在当前标签页内继续下载` : `${asset.title} · ${asset.files} 个文件` })
+  const saveAsset = async (feature, prompt, result) => {
+    const draftAsset = { ...createAssetRecord(feature, prompt, result), resultData: result }
+    try {
+      const asset = session ? await persistAsset(draftAsset) : draftAsset
+      setAssets((current) => [asset, ...current])
+      setToast({
+        title: '已保存到我的资产',
+        detail: session
+          ? `${asset.title} · 已同步至内部账户云端资产库`
+          : asset.sessionOnly
+            ? `${asset.title} · 生成图可在当前标签页内继续下载`
+            : `${asset.title} · ${asset.files} 个文件`,
+      })
+    } catch (error) {
+      setToast({ title: '资产保存失败', detail: error instanceof Error ? error.message : '请检查云端存储配置。' })
+    }
   }
 
-  const confirmDelete = (asset) => {
-    setAssets((current) => current.filter((item) => item.id !== asset.id))
+  const confirmDelete = async (asset) => {
+    try {
+      if (session && asset.persistent) await deletePersistentAsset(asset)
+      setAssets((current) => current.filter((item) => item.id !== asset.id))
+      setDialog(null)
+      setToast({ title: '资产已删除', detail: `${asset.title} 已从项目资产库移除。` })
+    } catch (error) {
+      setToast({ title: '资产删除失败', detail: error instanceof Error ? error.message : '请稍后再试。' })
+    }
+  }
+
+  const addWorkspaceMemo = async (text) => {
+    if (session) {
+      const memo = await insertMemo(text)
+      setMemos((current) => [memo, ...current])
+      return
+    }
+    const time = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date())
+    setMemos((current) => [{ id: Date.now(), text, time: `今天 ${time}` }, ...current])
+  }
+
+  const updateWorkspaceMemo = async (memo, text) => {
+    const saved = session ? await updateMemo(memo.id, text) : { ...memo, text }
+    setMemos((current) => current.map((item) => item.id === memo.id ? saved : item))
+  }
+
+  const login = async (username, password) => {
+    const nextSession = await signInInternalAccount(username, password)
+    setSession(nextSession)
+    return nextSession
+  }
+
+  const logout = async () => {
+    await signOutInternalAccount()
+    setSession(null)
     setDialog(null)
-    setToast({ title: '资产已删除', detail: `${asset.title} 已从项目资产库移除。` })
+    setToast({ title: '已退出内部账户', detail: '已恢复为“方案一组”访客演示数据。' })
+  }
+
+  const saveGenerationHistory = async (payload) => {
+    if (!session) return
+    await recordGeneration(payload)
   }
 
   const handleApiChanged = (enabled) => {
@@ -133,13 +256,15 @@ export default function App() {
         onClose={() => setMobileNavOpen(false)}
         onApiConfig={() => setDialog({ type: 'api-config' })}
         onProfile={() => setDialog({ type: 'profile' })}
-        apiEnabled={apiEnabled}
-        apiKeyCount={apiEnabled ? 1 + imageModes.length : 0}
+        apiEnabled={session ? managedModels.languageReady && managedModels.imageModes.length > 0 : apiEnabled}
+        apiKeyCount={session ? (managedModels.languageReady ? 1 : 0) + managedModels.imageModes.length : apiEnabled ? 1 + imageModes.length : 0}
+        session={session}
+        syncState={syncState}
       />
       <main className="main-shell">
         <Topbar route={route} onMenu={() => setMobileNavOpen(true)} onNavigate={navigate} onDialog={setDialog} />
         <div className="page-shell">
-          {route === 'home' && <HomeView onNavigate={navigate} onDialog={setDialog} />}
+          {route === 'home' && <HomeView onNavigate={navigate} onDialog={setDialog} memos={memos} onAddMemo={addWorkspaceMemo} onUpdateMemo={updateWorkspaceMemo} persistent={Boolean(session)} />}
           {features.map((feature) => (
             <div hidden={route !== feature.id} key={feature.id}>
               <FeatureWorkspace
@@ -150,6 +275,8 @@ export default function App() {
                 onDialog={setDialog}
                 onToast={setToast}
                 imageModes={imageModes}
+                managed={Boolean(session)}
+                onGenerationComplete={saveGenerationHistory}
               />
             </div>
           ))}
@@ -158,13 +285,13 @@ export default function App() {
           )}
         </div>
       </main>
-      {dialog && <Dialog data={dialog} onClose={() => setDialog(null)} onDelete={confirmDelete} onToast={setToast} onApiChanged={handleApiChanged} />}
+      {dialog && <Dialog data={dialog} onClose={() => setDialog(null)} onDelete={confirmDelete} onToast={setToast} onApiChanged={handleApiChanged} session={session} authReady={authReady} syncState={syncState} onLogin={login} onLogout={logout} managedModels={managedModels} />}
       {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
     </div>
   )
 }
 
-function Sidebar({ route, open, onNavigate, onClose, onApiConfig, onProfile, apiEnabled, apiKeyCount }) {
+function Sidebar({ route, open, onNavigate, onClose, onApiConfig, onProfile, apiEnabled, apiKeyCount, session, syncState }) {
   return (
     <>
       <button className={`nav-scrim ${open ? 'is-open' : ''}`} aria-label="关闭导航" onClick={onClose} />
@@ -211,12 +338,12 @@ function Sidebar({ route, open, onNavigate, onClose, onApiConfig, onProfile, api
         <div className="sidebar-bottom">
           <button className="api-card" onClick={onApiConfig}>
             <span className="status-pulse" />
-            <span><strong>{apiEnabled ? '模型密钥已配置' : 'API Key 配置'}</strong><small>{apiEnabled ? `${apiKeyCount} MODEL KEYS READY` : 'LOCAL DEMO ADAPTER'}</small></span>
+            <span><strong>{session ? (apiEnabled ? '内置模型已连接' : '内置模型待配置') : apiEnabled ? '模型密钥已配置' : 'API Key 配置'}</strong><small>{session ? `${apiKeyCount} SERVER MODEL${apiKeyCount === 1 ? '' : 'S'} · ${syncState === 'ready' ? 'CLOUD READY' : 'SYNCING'}` : apiEnabled ? `${apiKeyCount} MODEL KEYS READY` : 'LOCAL DEMO ADAPTER'}</small></span>
             <ArrowRight />
           </button>
           <button className="profile-row" type="button" onClick={onProfile}>
             <span className="avatar"><UserRound /></span>
-            <span><strong>方案一组</strong><small>访客演示 · 信息脱敏</small></span>
+            <span><strong>{session ? internalAccountUsername : '方案一组'}</strong><small>{session ? '内部账户 · 云端同步' : '访客演示 · 信息脱敏'}</small></span>
             <MoreHorizontal />
           </button>
         </div>
@@ -246,7 +373,7 @@ function Topbar({ route, onMenu, onNavigate, onDialog }) {
   )
 }
 
-function HomeView({ onNavigate, onDialog }) {
+function HomeView({ onNavigate, onDialog, memos, onAddMemo, onUpdateMemo, persistent }) {
   return (
     <div className="home-view enter-view">
       <section className="home-hero">
@@ -259,7 +386,7 @@ function HomeView({ onNavigate, onDialog }) {
             <button className="button button-secondary" onClick={() => onNavigate('assets')}>打开最近项目 <FolderOpen /></button>
           </div>
         </div>
-        <WorkspaceScene onDialog={onDialog} />
+        <WorkspaceScene onDialog={onDialog} memos={memos} onAddMemo={onAddMemo} onUpdateMemo={onUpdateMemo} persistent={persistent} />
       </section>
 
       <section className="section-block">
@@ -292,28 +419,30 @@ function HomeView({ onNavigate, onDialog }) {
   )
 }
 
-function WorkspaceScene({ onDialog }) {
-  const [memos, setMemos] = useState([
-    { id: 2, text: '周五前完成 A / B / C 方案比选，准备甲方沟通版。', time: '今天 10:20' },
-    { id: 1, text: '确认滨水入口雨棚净高，与结构顾问同步 4.8m 控制线。', time: '今天 09:35' },
-  ])
+function WorkspaceScene({ onDialog, memos, onAddMemo, onUpdateMemo, persistent }) {
   const [draft, setDraft] = useState('')
   const [showAllMemos, setShowAllMemos] = useState(false)
+  const [saving, setSaving] = useState(false)
 
-  const addMemo = (event) => {
+  const addMemo = async (event) => {
     event.preventDefault()
     const text = draft.trim()
     if (!text) return
-    const time = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date())
-    setMemos((current) => [{ id: Date.now(), text, time: `今天 ${time}` }, ...current])
-    setDraft('')
+    setSaving(true)
+    try {
+      await onAddMemo(text)
+      setDraft('')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const openMemo = (memo) => {
     onDialog({
       type: 'memo',
       memo,
-      onSave: (text) => setMemos((current) => current.map((item) => item.id === memo.id ? { ...item, text } : item)),
+      persistent,
+      onSave: (text) => onUpdateMemo(memo, text),
     })
   }
 
@@ -337,6 +466,7 @@ function WorkspaceScene({ onDialog }) {
           <section className="scene-memo-block" aria-label="最近备忘录">
             <div className="memo-block-head"><span>PROJECT MEMOS · {String(memos.length).padStart(2, '0')}</span>{memos.length > 2 && <button className="memo-more-tab" onClick={() => setShowAllMemos(true)}>更多 {memos.length - 2}<ArrowRight /></button>}</div>
             <div className="memo-card-grid" aria-live="polite">
+              {!memos.length && <div className="memo-empty"><WandSparkles /><p><strong>还没有真实备忘录</strong><small>在下方写下第一条，登录后会长期保留。</small></p></div>}
               {memos.slice(0, 2).map((memo, index) => (
                 <button className="memo-card" type="button" onClick={() => openMemo(memo)} aria-label={`查看并编辑备忘录：${memo.text}`} key={memo.id}><span>{String(memos.length - index).padStart(2, '0')}</span><p>{memo.text}</p><small><Clock3 /> {memo.time}</small></button>
               ))}
@@ -358,12 +488,12 @@ function WorkspaceScene({ onDialog }) {
           </div>
         </>
       )}
-      <form className="scene-command" onSubmit={addMemo}><WandSparkles /><input value={draft} onChange={(event) => setDraft(event.target.value)} maxLength="120" aria-label="新增项目备忘录" placeholder="写下本周项目备忘录…" /><button type="submit" aria-label="保存备忘录" disabled={!draft.trim()}><Send /></button></form>
+      <form className="scene-command" onSubmit={addMemo}><WandSparkles /><input value={draft} onChange={(event) => setDraft(event.target.value)} maxLength="120" aria-label="新增项目备忘录" placeholder="写下本周项目备忘录…" /><button type="submit" aria-label="保存备忘录" disabled={!draft.trim() || saving}>{saving ? <LoaderCircle className="spin" /> : <Send />}</button></form>
     </div>
   )
 }
 
-function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToast, imageModes }) {
+function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToast, imageModes, managed, onGenerationComplete }) {
   const [prompt, setPrompt] = useState('')
   const [files, setFiles] = useState([])
   const [dragActive, setDragActive] = useState(false)
@@ -468,13 +598,26 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
     setLoading(true)
     setResult(null)
     try {
-      const response = await generateWithApi({
+      const generate = managed ? generateWithCloudApi : generateWithApi
+      const response = await generate({
         feature: feature.id,
         prompt,
         files,
         options: { imageSlot: imageMode === 'demo' ? undefined : imageMode },
       })
       setResult(response)
+      if (managed) {
+        try {
+          await onGenerationComplete({
+            feature: feature.id,
+            prompt,
+            fileNames: files.map((file) => file.name),
+            result: response,
+          })
+        } catch (historyError) {
+          onToast({ title: '结果已生成，历史记录同步失败', detail: historyError instanceof Error ? historyError.message : '稍后可重新生成。' })
+        }
+      }
       if (activeRef.current) {
         window.setTimeout(() => outputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
       } else {
@@ -556,7 +699,7 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
             </label>
           </div>
           <div className="composer-footer">
-            <span><Cloud /> 当前标签页内存 · 切换栏目不中断，刷新后释放</span>
+            <span><Cloud /> {managed ? '项目资料仍为临时附件 · 生成记录登录后云端保留' : '当前标签页内存 · 切换栏目不中断，刷新后释放'}</span>
             <div className="composer-actions">
               {feature.id === 'render' && <label className={`image-mode-picker ${renderImageModes.length === 1 ? 'is-locked' : ''}`}><span><ImagePlus /> 生图模式</span><select aria-label="选择生图 API" value={imageMode} onChange={(event) => setImageMode(event.target.value)} disabled={loading || renderImageModes.length === 1}>{renderImageModes.map((mode) => <option value={mode.id} key={mode.id}>{mode.label} · {mode.model}</option>)}</select></label>}
               <button className="button button-primary generate-button" onClick={handleGenerate} disabled={loading}>
@@ -630,8 +773,9 @@ function OutputSkeleton({ feature }) {
 }
 
 function OutputPanel({ feature, result, selectedScheme, setSelectedScheme, onSave, onDialog, onToast }) {
-  const isLiveResult = result.mode.startsWith('external-')
-  const liveLabel = result.mode === 'external-image-api' ? 'REAL IMAGE API' : 'REAL LANGUAGE API'
+  const isLiveResult = /^(external|managed)-/.test(result.mode)
+  const isManagedResult = result.mode.startsWith('managed-')
+  const liveLabel = result.mode.endsWith('image-api') ? 'REAL IMAGE API' : 'REAL LANGUAGE API'
   return (
     <div className="output-panel glass-panel">
       <div className="output-head">
@@ -642,7 +786,7 @@ function OutputPanel({ feature, result, selectedScheme, setSelectedScheme, onSav
       {isLiveResult && (
         <div className="api-result-note">
           <span>{result.mode === 'external-image-api' ? <ImagePlus /> : <BrainCircuit />} {liveLabel}</span>
-          <p>由 ArchFlow 预设的 <strong>{result.model}</strong> 实时生成；本次输入与结果未写入 ArchFlow 数据库。</p>
+          <p>由 ArchFlow 预设的 <strong>{result.model}</strong> 实时生成；{isManagedResult ? '本次生成记录已同步，原始上传资料关闭后删除。' : '本次输入与结果未写入 ArchFlow 数据库。'}</p>
         </div>
       )}
 
@@ -654,7 +798,7 @@ function OutputPanel({ feature, result, selectedScheme, setSelectedScheme, onSav
       {feature.id === 'report' && <ReportOutput onToast={onToast} />}
 
       <div className="output-actions">
-        <p><Clock3 /> 生成于刚刚 · {isLiveResult ? '用户 API 真实结果' : '本地演示数据'}</p>
+        <p><Clock3 /> 生成于刚刚 · {isManagedResult ? '内部账户真实结果' : isLiveResult ? '用户 API 真实结果' : '本地演示数据'}</p>
         <div>
           <button className="button button-secondary" onClick={() => onToast({ title: '已创建调整版本', detail: '保留当前结果，并建立 V2 迭代分支。' })}>继续调整 <SlidersHorizontal /></button>
           <button className="button button-primary" onClick={onSave}>保存到资产 <FileArchive /></button>
@@ -872,7 +1016,7 @@ function AssetsView({ assets, onDialog, onNavigate }) {
           {filtered.map((asset) => (
             <article className="asset-card" key={asset.id}>
               <button className={`asset-preview tone-${asset.tone} ${asset.artifacts?.length ? 'has-generated-preview' : ''}`} onClick={() => onDialog({ type: 'asset', asset })} aria-label={`查看${asset.title}详情`}><AssetPreviewVisual asset={asset} /><span className="asset-type">{asset.type}</span><span className="asset-count">{asset.files}<small>FILES</small></span></button>
-              <div className="asset-body"><div><small>{asset.source}</small><h2>{asset.title}</h2></div><div className="asset-meta"><span>{asset.time}</span><span>{asset.sessionOnly ? 'Session Asset' : 'Local POC'}</span></div><div className="asset-actions"><button className="button button-quiet" onClick={() => onDialog({ type: 'asset', asset })}>查看详情 <Eye /></button><button className="icon-button delete-icon" onClick={() => onDialog({ type: 'delete', asset })} aria-label={`删除${asset.title}`}><Trash2 /></button></div></div>
+              <div className="asset-body"><div><small>{asset.source}</small><h2>{asset.title}</h2></div><div className="asset-meta"><span>{asset.time}</span><span>{asset.persistent ? 'Cloud Asset' : asset.sessionOnly ? 'Session Asset' : 'Local POC'}</span></div><div className="asset-actions"><button className="button button-quiet" onClick={() => onDialog({ type: 'asset', asset })}>查看详情 <Eye /></button><button className="icon-button delete-icon" onClick={() => onDialog({ type: 'delete', asset })} aria-label={`删除${asset.title}`}><Trash2 /></button></div></div>
             </article>
           ))}
         </div>
@@ -883,7 +1027,7 @@ function AssetsView({ assets, onDialog, onNavigate }) {
   )
 }
 
-function Dialog({ data, onClose, onDelete, onToast, onApiChanged }) {
+function Dialog({ data, onClose, onDelete, onToast, onApiChanged, session, authReady, syncState, onLogin, onLogout, managedModels }) {
   const closeRef = useRef(null)
   useEffect(() => {
     closeRef.current?.focus()
@@ -893,10 +1037,11 @@ function Dialog({ data, onClose, onDelete, onToast, onApiChanged }) {
   }, [onClose])
 
   if (data.type === 'profile') {
-    return <ProfileDialog closeRef={closeRef} onClose={onClose} />
+    return <ProfileDialog closeRef={closeRef} onClose={onClose} onToast={onToast} session={session} authReady={authReady} syncState={syncState} onLogin={onLogin} onLogout={onLogout} />
   }
 
   if (data.type === 'api-config') {
+    if (session) return <ManagedApiDialog closeRef={closeRef} onClose={onClose} managedModels={managedModels} />
     return <ApiConfigDialog closeRef={closeRef} onClose={onClose} onToast={onToast} onApiChanged={onApiChanged} />
   }
 
@@ -925,7 +1070,7 @@ function Dialog({ data, onClose, onDelete, onToast, onApiChanged }) {
       <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
         <section className="dialog-card confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-title">
           <button ref={closeRef} className="icon-button dialog-close" onClick={onClose} aria-label="关闭"><X /></button>
-          <span className="dialog-symbol is-danger"><Trash2 /></span><span className="eyebrow">DELETE ASSET</span><h2 id="delete-title">删除资产包？</h2><p>“{data.asset.title}”及其中 {data.asset.files} 个演示文件将从我的资产移除，此 POC 不提供恢复。</p>
+          <span className="dialog-symbol is-danger"><Trash2 /></span><span className="eyebrow">DELETE ASSET</span><h2 id="delete-title">删除资产包？</h2><p>“{data.asset.title}”及其中 {data.asset.files} 个文件将从我的资产移除，{data.asset.persistent ? '云端记录与对应生成图也会一并删除，' : ''}此 POC 不提供恢复。</p>
           <div className="dialog-actions"><button className="button button-secondary" onClick={onClose}>保留资产</button><button className="button button-danger" onClick={() => onDelete(data.asset)}>确认删除 <Trash2 /></button></div>
         </section>
       </div>
@@ -951,8 +1096,8 @@ function Dialog({ data, onClose, onDelete, onToast, onApiChanged }) {
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="dialog-card asset-dialog" role="dialog" aria-modal="true" aria-labelledby="asset-title">
         <button ref={closeRef} className="icon-button dialog-close" onClick={onClose} aria-label="关闭"><X /></button>
-        <div className={`dialog-asset-preview tone-${asset.tone} ${generatedArtifact ? 'has-generated-asset' : ''}`}>{generatedArtifact ? <img src={generatedArtifact.imageUrl} alt={generatedArtifact.title} decoding="async" draggable="false" /> : <><span className="asset-folder"><i/><i/><i/></span><FileArchive /></>} {generatedArtifact && <span className="session-preview-badge"><Check /> 当前会话真实生成</span>}</div>
-        <div className="dialog-asset-copy"><span className="eyebrow">ASSET PACKAGE</span><h2 id="asset-title">{asset.title}</h2><p>由 {asset.source} 生成，包含可继续编辑的项目成果和过程记录。</p><dl><div><dt>资产类型</dt><dd>{asset.type}</dd></div><div><dt>文件数量</dt><dd>{asset.files} 个</dd></div><div><dt>更新时间</dt><dd>{asset.time}</dd></div></dl>{generatedArtifact && <div className="session-asset-file"><span><ImagePlus /></span><p><strong>{generatedArtifact.title}</strong><small>{generatedArtifact.meta} · 当前标签页内存，刷新后清除</small></p><button className="icon-button" onClick={() => downloadGeneratedAsset(generatedArtifact.imageUrl, generatedArtifact.name)} aria-label={`下载${generatedArtifact.title}`}><Download /></button></div>}<div className="dialog-actions"><button className="button button-secondary" onClick={() => generatedArtifact ? downloadGeneratedAsset(generatedArtifact.imageUrl, generatedArtifact.name) : downloadDemo(`${asset.title}.zip`)}>{generatedArtifact ? '下载生成图' : '下载资产'} <Download /></button><button className="button button-primary" onClick={onClose}>完成 <Check /></button></div></div>
+        <div className={`dialog-asset-preview tone-${asset.tone} ${generatedArtifact ? 'has-generated-asset' : ''}`}>{generatedArtifact ? <img src={generatedArtifact.imageUrl} alt={generatedArtifact.title} decoding="async" draggable="false" /> : <><span className="asset-folder"><i/><i/><i/></span><FileArchive /></>} {generatedArtifact && <span className="session-preview-badge"><Check /> {asset.persistent ? '内部账户云端资产' : '当前会话真实生成'}</span>}</div>
+        <div className="dialog-asset-copy"><span className="eyebrow">ASSET PACKAGE</span><h2 id="asset-title">{asset.title}</h2><p>由 {asset.source} 生成，包含可继续编辑的项目成果和过程记录。{asset.resultData && ' 本次真实生成内容已随资产保留。'}</p><dl><div><dt>资产类型</dt><dd>{asset.type}</dd></div><div><dt>文件数量</dt><dd>{asset.files} 个</dd></div><div><dt>更新时间</dt><dd>{asset.time}</dd></div></dl>{generatedArtifact && <div className="session-asset-file"><span><ImagePlus /></span><p><strong>{generatedArtifact.title}</strong><small>{generatedArtifact.meta} · {asset.persistent ? '私有云存储，可跨设备下载' : '当前标签页内存，刷新后清除'}</small></p><button className="icon-button" onClick={() => downloadGeneratedAsset(generatedArtifact.imageUrl, generatedArtifact.name)} aria-label={`下载${generatedArtifact.title}`}><Download /></button></div>}<div className="dialog-actions"><button className="button button-secondary" onClick={() => generatedArtifact ? downloadGeneratedAsset(generatedArtifact.imageUrl, generatedArtifact.name) : asset.resultData ? downloadDemo(`${asset.title}-成果.json`, JSON.stringify(asset.resultData, null, 2)) : downloadDemo(`${asset.title}.zip`)}>{generatedArtifact ? '下载生成图' : asset.resultData ? '下载成果数据' : '下载资产'} <Download /></button><button className="button button-primary" onClick={onClose}>完成 <Check /></button></div></div>
       </section>
     </div>
   )
@@ -960,13 +1105,20 @@ function Dialog({ data, onClose, onDelete, onToast, onApiChanged }) {
 
 function MemoDetailDialog({ closeRef, data, onClose, onToast }) {
   const [text, setText] = useState(data.memo.text)
-  const save = (event) => {
+  const [saving, setSaving] = useState(false)
+  const save = async (event) => {
     event.preventDefault()
     const nextText = text.trim()
     if (!nextText) return
-    data.onSave(nextText)
-    onClose()
-    onToast({ title: '备忘录已更新', detail: '修改已保留在当前页面会话。' })
+    setSaving(true)
+    try {
+      await data.onSave(nextText)
+      onClose()
+      onToast({ title: '备忘录已更新', detail: data.persistent ? '修改已同步到内部账户云端。' : '修改已保留在当前页面会话。' })
+    } catch (error) {
+      onToast({ title: '备忘录保存失败', detail: error instanceof Error ? error.message : '请稍后再试。' })
+      setSaving(false)
+    }
   }
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
@@ -975,19 +1127,82 @@ function MemoDetailDialog({ closeRef, data, onClose, onToast }) {
         <span className="dialog-symbol is-info"><WandSparkles /></span>
         <span className="eyebrow">PROJECT MEMO</span>
         <h2 id="memo-dialog-title">备忘录详情</h2>
-        <p className="memo-dialog-meta"><Clock3 /> {data.memo.time} · 当前会话</p>
+        <p className="memo-dialog-meta"><Clock3 /> {data.memo.time} · {data.persistent ? '云端同步' : '当前会话'}</p>
         <form onSubmit={save}>
           <label htmlFor="memo-detail-text">备忘录内容</label>
           <textarea id="memo-detail-text" value={text} onChange={(event) => setText(event.target.value)} maxLength="240" autoFocus />
           <div className="memo-editor-count">{text.length} / 240</div>
-          <div className="dialog-actions"><button className="button button-secondary" type="button" onClick={onClose}>取消</button><button className="button button-primary" type="submit" disabled={!text.trim()}>保存修改 <Check /></button></div>
+          <div className="dialog-actions"><button className="button button-secondary" type="button" onClick={onClose}>取消</button><button className="button button-primary" type="submit" disabled={!text.trim() || saving}>{saving ? <LoaderCircle className="spin" /> : <>保存修改 <Check /></>}</button></div>
         </form>
       </section>
     </div>
   )
 }
 
-function ProfileDialog({ closeRef, onClose }) {
+function ProfileDialog({ closeRef, onClose, onToast, session, authReady, syncState, onLogin, onLogout }) {
+  const [loginMode, setLoginMode] = useState(false)
+  const [username, setUsername] = useState(internalAccountUsername)
+  const [password, setPassword] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const login = async (event) => {
+    event.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      await onLogin(username, password)
+      onClose()
+      onToast({ title: `欢迎，${internalAccountUsername}`, detail: '正在加载你的云端备忘录、资产与生成记录。' })
+    } catch (loginError) {
+      setError(loginError instanceof Error ? loginError.message : '登录失败，请稍后再试。')
+      setLoading(false)
+    }
+  }
+
+  const logout = async () => {
+    setLoading(true)
+    try {
+      await onLogout()
+    } catch (logoutError) {
+      setError(logoutError instanceof Error ? logoutError.message : '退出失败，请稍后再试。')
+      setLoading(false)
+    }
+  }
+
+  if (session) {
+    return (
+      <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+        <section className="dialog-card profile-dialog account-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-title">
+          <button ref={closeRef} className="icon-button dialog-close" onClick={onClose} aria-label="关闭"><X /></button>
+          <div className="profile-dialog-head"><span className="large-avatar is-authenticated"><UserRound /></span><div><span className="eyebrow">INTERNAL ACCOUNT</span><h2 id="profile-title">{internalAccountUsername}</h2><p>企业内部演示 · 真实数据工作区</p></div></div>
+          <div className="privacy-note is-connected"><BadgeCheck /><p><strong>{syncState === 'ready' ? '云端数据已同步' : syncState === 'error' ? '云端同步异常' : '正在同步云端数据'}</strong><small>备忘录、生成记录及保存到资产库的内容会跨设备保留；原始上传资料仍仅用于本次生成。</small></p></div>
+          <div className="account-capability-grid"><article><span>01</span><div><strong>私有数据</strong><small>数据库与存储均启用用户级 RLS，仅当前账号可访问。</small></div></article><article><span>02</span><div><strong>内置模型</strong><small>模型密钥保存在服务端，不会下发到浏览器。</small></div></article></div>
+          {error && <p className="login-error" role="alert"><Info /> {error}</p>}
+          <div className="dialog-actions"><button className="button button-secondary" onClick={logout} disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><UserRound /> 退出账户</>}</button><button className="button button-primary" onClick={onClose}>进入工作区 <ArrowRight /></button></div>
+        </section>
+      </div>
+    )
+  }
+
+  if (loginMode) {
+    return (
+      <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+        <section className="dialog-card profile-dialog login-dialog" role="dialog" aria-modal="true" aria-labelledby="login-title">
+          <button ref={closeRef} className="icon-button dialog-close" onClick={onClose} aria-label="关闭"><X /></button>
+          <span className="dialog-symbol is-info"><UserRound /></span><span className="eyebrow">SECURE SIGN IN</span><h2 id="login-title">登录内部工作区</h2><p>登录后切换到真实、可持久化的数据空间。</p>
+          <form className="login-form" onSubmit={login}>
+            <label htmlFor="internal-username"><span>账号</span><input id="internal-username" value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" disabled={loading} /></label>
+            <label htmlFor="internal-password"><span>密码</span><input id="internal-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" placeholder="请输入内部账户密码" autoFocus disabled={loading} /></label>
+            {error && <p className="login-error" role="alert"><Info /> {error}</p>}
+            {!isSupabaseConfigured && <p className="login-error" role="alert"><Info /> 部署变量尚未配置，当前环境暂时不能登录。</p>}
+            <div className="dialog-actions"><button className="button button-secondary" type="button" onClick={() => setLoginMode(false)} disabled={loading}>返回演示身份</button><button className="button button-primary" type="submit" disabled={loading || !authReady || !username.trim() || !password}>{loading ? <><LoaderCircle className="spin" /> 正在登录</> : <>安全登录 <ArrowRight /></>}</button></div>
+          </form>
+        </section>
+      </div>
+    )
+  }
+
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="dialog-card profile-dialog account-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-title">
@@ -1002,6 +1217,25 @@ function ProfileDialog({ closeRef, onClose }) {
           <article><span>02</span><div><strong>后续接入</strong><small>登录认证、企业组织、角色权限与项目归属。</small></div></article>
         </div>
         <div className="future-auth-note"><UserRound /><p><strong>账户功能已独立预留</strong><small>后续可接入手机号、邮箱或企业 SSO；模型密钥配置已移至独立入口。</small></p></div>
+        <div className="dialog-actions"><button className="button button-secondary" onClick={onClose}>继续访客演示</button><button className="button button-primary" onClick={() => setLoginMode(true)}>登录内部账户 <ArrowRight /></button></div>
+      </section>
+    </div>
+  )
+}
+
+function ManagedApiDialog({ closeRef, onClose, managedModels }) {
+  const modelCount = (managedModels.languageReady ? 1 : 0) + managedModels.imageModes.length
+  return (
+    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="dialog-card profile-dialog managed-api-dialog" role="dialog" aria-modal="true" aria-labelledby="managed-api-title">
+        <button ref={closeRef} className="icon-button dialog-close" onClick={onClose} aria-label="关闭"><X /></button>
+        <span className="dialog-symbol is-info"><BrainCircuit /></span><span className="eyebrow">SERVER MANAGED MODELS</span><h2 id="managed-api-title">内部账号模型配置</h2><p>密钥只保存在 Supabase Edge Function Secrets，不会显示或写入浏览器。</p>
+        <div className="managed-model-list">
+          <article className={managedModels.languageReady ? 'is-ready' : 'is-missing'}><span><BrainCircuit /></span><p><strong>语言大模型</strong><small>{managedModels.languageReady ? managedModels.languageModel : '等待管理员配置'}</small></p><em>{managedModels.languageReady ? <><Check /> 已连接</> : <><Info /> 未配置</>}</em></article>
+          {managedModels.imageModes.map((mode, index) => <article className="is-ready" key={mode.id}><span><ImagePlus /></span><p><strong>生图大模型 {index + 1}</strong><small>{mode.label} · {mode.model}</small></p><em><Check /> 已连接</em></article>)}
+          {!managedModels.imageModes.length && <article className="is-missing"><span><ImagePlus /></span><p><strong>生图大模型</strong><small>等待管理员配置</small></p><em><Info /> 未配置</em></article>}
+        </div>
+        <div className="privacy-note"><BadgeCheck /><p><strong>{modelCount} 个服务端模型可用</strong><small>内部账号无需自行填写 API Key；访客演示的本地 Key 配置与此处完全分开。</small></p></div>
         <div className="dialog-actions"><button className="button button-primary" onClick={onClose}>完成 <Check /></button></div>
       </section>
     </div>

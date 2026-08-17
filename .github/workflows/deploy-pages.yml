@@ -36,6 +36,10 @@ jobs:
         run: pnpm test
 
       - name: Build
+        env:
+          VITE_SUPABASE_URL: https://mblnorfsegteomazffwy.supabase.co
+          VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_Gn8SniEtQm0cnqdEcIS8xw_HIwAl1a5
+          VITE_INTERNAL_ACCOUNT_EMAIL: internal-account-1@archflow.local
         run: pnpm build
 
       - name: Configure Pages
