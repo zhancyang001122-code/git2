@@ -350,24 +350,59 @@ export async function checkModelConnection(kind, values, { timeoutMs = 12000 } =
 
 const verifiedCaseIds = ['panlong', 'tank', 'longmuseum']
 
-function readConfig() {
+function readStoredImageSlot(stored, slotNumber) {
+  const prefix = slotNumber === 1 ? 'image' : 'image2'
+  const defaultProvider = slotNumber === 1 ? 'yunfei' : 'compatible'
+  const apiKey = String(stored[`${prefix}ApiKey`] || (slotNumber === 1 ? stored.apiKey || '' : '')).trim()
+  const connection = resolveModelConnection('image', {
+    provider: stored[`${prefix}Provider`] || defaultProvider,
+    baseUrl: stored[`${prefix}BaseUrl`],
+    model: stored[`${prefix}Model`],
+  })
+  const verifiedValue = stored[`${prefix}Verified`]
+  return {
+    id: prefix,
+    slotNumber,
+    apiKey,
+    verified: stored.version ? Boolean(verifiedValue) : Boolean(apiKey),
+    connection,
+  }
+}
+
+export function getConfiguredImageModes() {
+  try {
+    const stored = JSON.parse(window.sessionStorage.getItem('archflow-api-config') || '{}')
+    if (!stored.enabled) return []
+    return [readStoredImageSlot(stored, 1), readStoredImageSlot(stored, 2)]
+      .filter((slot) => slot.apiKey && slot.verified)
+      .map((slot) => ({
+        id: slot.id,
+        label: `生图 API ${slot.slotNumber}`,
+        providerLabel: slot.connection.providerLabel,
+        model: slot.connection.model,
+      }))
+  } catch {
+    return []
+  }
+}
+
+function readConfig(requestedImageSlot = 'image') {
   try {
     const stored = JSON.parse(window.sessionStorage.getItem('archflow-api-config') || '{}')
     const llmApiKey = stored.llmApiKey || stored.apiKey || ''
-    const imageApiKey = stored.imageApiKey || stored.apiKey || ''
     const isLegacyBailianModel = (stored.llmProvider || 'bailian') === 'bailian' && /^\d+$/.test(String(stored.llmModel || ''))
     const language = resolveModelConnection('language', {
       provider: stored.llmProvider || 'bailian',
       baseUrl: stored.llmBaseUrl,
       model: isLegacyBailianModel ? modelProviders.language.bailian.model : stored.llmModel,
     })
-    const image = resolveModelConnection('image', {
-      provider: stored.imageProvider || 'yunfei',
-      baseUrl: stored.imageBaseUrl,
-      model: stored.imageModel,
-    })
+    const imageSlots = [readStoredImageSlot(stored, 1), readStoredImageSlot(stored, 2)]
+    const imageSlot = imageSlots.find((slot) => slot.id === requestedImageSlot && slot.apiKey && slot.verified)
+      || imageSlots.find((slot) => slot.apiKey && slot.verified)
+      || imageSlots[0]
+    const image = imageSlot.connection
     return {
-      enabled: Boolean(stored.enabled && llmApiKey && imageApiKey && !isLegacyBailianModel),
+      enabled: Boolean(stored.enabled && llmApiKey && imageSlot.apiKey && imageSlot.verified && !isLegacyBailianModel),
       llmProvider: language.provider,
       llmProtocol: language.protocol,
       llmBaseUrl: language.baseUrl,
@@ -377,7 +412,8 @@ function readConfig() {
       imageProtocol: image.protocol,
       imageBaseUrl: image.baseUrl,
       imageModel: image.model,
-      imageApiKey,
+      imageApiKey: imageSlot.apiKey,
+      imageSlot: imageSlot.id,
       imageSize: builtInModels.image.size,
     }
   } catch {
@@ -582,13 +618,13 @@ async function generateRenderImages({ prompt, files, config }) {
 }
 
 export async function generateWithApi({ feature, prompt, files = [], options = {} }) {
-  const config = readConfig()
+  const config = readConfig(options.imageSlot)
   const isLiveFeature = liveFeatureIds.includes(feature)
 
   if (config.enabled && isLiveFeature) {
     if (feature === 'render') {
       if (!config.imageBaseUrl || !config.imageModel || !config.imageApiKey) {
-        throw new Error('请先在“方案一组”中填写生图大模型 API Key。')
+        throw new Error('请先在“API Key 配置”中填写并应用至少一个生图 API Key。')
       }
       const generated = await generateRenderImages({ prompt, files, config })
       return {
@@ -605,7 +641,7 @@ export async function generateWithApi({ feature, prompt, files = [], options = {
     }
 
     if (!config.llmBaseUrl || !config.llmModel || !config.llmApiKey) {
-      throw new Error('请先在“方案一组”中填写语言大模型 API Key。')
+      throw new Error('请先在“API Key 配置”中填写并应用语言大模型 API Key。')
     }
     const generated = await generateStructuredText({ feature, prompt, files, config, options })
     return {

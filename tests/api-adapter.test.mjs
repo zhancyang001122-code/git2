@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { File } from 'node:buffer'
 import test from 'node:test'
-import { checkModelConnection, createAssetRecord, generateWithApi } from '../src/data.js'
+import { checkModelConnection, createAssetRecord, generateWithApi, getConfiguredImageModes } from '../src/data.js'
 
 let activeConfig = {}
 globalThis.window = {
@@ -22,12 +22,14 @@ globalThis.FileReader = class FileReader {
 
 const baseConfig = {
   enabled: true,
+  version: 6,
   llmProvider: 'bailian',
   llmModel: 'qwen-plus',
   llmApiKey: 'test-language-key',
   imageProvider: 'yunfei',
   imageModel: 'gpt-image-2',
   imageApiKey: 'test-image-key',
+  imageVerified: true,
 }
 
 test('方案灵感使用语言模型结构化结果', async () => {
@@ -225,6 +227,46 @@ test('第三方 NewAPI 的 Gemini 生图模型自动改走原生 Gemini 端点',
   assert.equal(request.url, 'https://img.yunfei.best/v1beta/models/gemini-3.1-flash-image:generateContent')
   assert.equal(request.options.headers.Authorization, 'Bearer test-image-key')
   assert.match(result.images[0].imageUrl, /^data:image\/png;base64,/)
+})
+
+test('AI 渲染按选择切换到第二个生图 API', async () => {
+  activeConfig = {
+    ...baseConfig,
+    image2Provider: 'compatible',
+    image2BaseUrl: 'https://second-image.example/v1',
+    image2Model: 'gpt-image-secondary',
+    image2ApiKey: 'test-second-image-key',
+    image2Verified: true,
+  }
+  let request
+  globalThis.fetch = async (url, options) => {
+    request = { url, options }
+    return { ok: true, json: async () => ({ data: [{ b64_json: 'ZmFrZQ==' }] }) }
+  }
+
+  const modes = getConfiguredImageModes()
+  assert.deepEqual(modes.map((mode) => mode.id), ['image', 'image2'])
+
+  const image = new File([new Uint8Array([137, 80, 78, 71])], 'reference.png', { type: 'image/png' })
+  const result = await generateWithApi({ feature: 'render', prompt: '雨后清晨', files: [image], options: { imageSlot: 'image2' } })
+  assert.equal(request.url, 'https://second-image.example/v1/images/edits')
+  assert.equal(request.options.headers.Authorization, 'Bearer test-second-image-key')
+  assert.equal(request.options.body.get('model'), 'gpt-image-secondary')
+  assert.equal(result.model, 'gpt-image-secondary')
+})
+
+test('只连接一个生图 API 时仅暴露一个可选模式', async () => {
+  activeConfig = { ...baseConfig }
+  let request
+  globalThis.fetch = async (url, options) => {
+    request = { url, options }
+    return { ok: true, json: async () => ({ data: [{ b64_json: 'ZmFrZQ==' }] }) }
+  }
+
+  assert.deepEqual(getConfiguredImageModes().map((mode) => mode.id), ['image'])
+  const image = new File([new Uint8Array([137, 80, 78, 71])], 'reference.png', { type: 'image/png' })
+  await generateWithApi({ feature: 'render', prompt: '黄昏', files: [image], options: { imageSlot: 'image2' } })
+  assert.equal(request.options.headers.Authorization, 'Bearer test-image-key')
 })
 
 test('保存 AI 渲染结果时真实图片随资产保留在当前会话', () => {
