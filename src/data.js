@@ -84,7 +84,7 @@ export const features = [
     number: '05',
     nav: 'AI 渲染',
     eyebrow: 'VISUALIZATION',
-    title: '让白模，拥有真实时间。',
+    title: '渲染，更为准确更为精美。',
     short: '材质、光影、景观与氛围生成',
     description: '锁定主体与构图，只补充材质、景观和环境光，输出可继续精修的效果图。',
     icon: SunMedium,

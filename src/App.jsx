@@ -115,8 +115,6 @@ export default function App() {
     setToast({ title: '资产已删除', detail: `${asset.title} 已从项目资产库移除。` })
   }
 
-  const currentFeature = features.find((feature) => feature.id === route)
-
   return (
     <div className="app-shell">
       <Sidebar
@@ -131,16 +129,18 @@ export default function App() {
         <Topbar route={route} onMenu={() => setMobileNavOpen(true)} onNavigate={navigate} onDialog={setDialog} />
         <div className="page-shell">
           {route === 'home' && <HomeView onNavigate={navigate} />}
-          {currentFeature && (
-            <FeatureWorkspace
-              key={currentFeature.id}
-              feature={currentFeature}
-              onNavigate={navigate}
-              onSave={saveAsset}
-              onDialog={setDialog}
-              onToast={setToast}
-            />
-          )}
+          {features.map((feature) => (
+            <div hidden={route !== feature.id} key={feature.id}>
+              <FeatureWorkspace
+                feature={feature}
+                active={route === feature.id}
+                onNavigate={navigate}
+                onSave={saveAsset}
+                onDialog={setDialog}
+                onToast={setToast}
+              />
+            </div>
+          ))}
           {route === 'assets' && (
             <AssetsView assets={assets} onDialog={setDialog} onNavigate={navigate} />
           )}
@@ -343,7 +343,7 @@ function WorkspaceScene() {
   )
 }
 
-function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
+function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToast }) {
   const [prompt, setPrompt] = useState('')
   const [files, setFiles] = useState([])
   const [dragActive, setDragActive] = useState(false)
@@ -352,6 +352,16 @@ function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
   const [selectedScheme, setSelectedScheme] = useState(null)
   const outputRef = useRef(null)
   const dragDepth = useRef(0)
+  const activeRef = useRef(active)
+  const scrollOnReveal = useRef(false)
+
+  useEffect(() => {
+    activeRef.current = active
+    if (!active || !result || !scrollOnReveal.current) return undefined
+    scrollOnReveal.current = false
+    const timer = window.setTimeout(() => outputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
+    return () => window.clearTimeout(timer)
+  }, [active, result])
 
   const useChip = (chip) => {
     setPrompt((current) => current ? `${current}，${chip}` : chip)
@@ -434,7 +444,12 @@ function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
     try {
       const response = await generateWithApi({ feature: feature.id, prompt, files })
       setResult(response)
-      window.setTimeout(() => outputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
+      if (activeRef.current) {
+        window.setTimeout(() => outputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
+      } else {
+        scrollOnReveal.current = true
+        onToast({ title: `${feature.nav}生成完成`, detail: '任务已在后台完成，切回该栏目即可查看结果。' })
+      }
     } catch (error) {
       onToast({ title: 'API 生成失败', detail: error instanceof Error ? error.message : '请检查接口地址、密钥、模型名与跨域设置。' })
     } finally {
@@ -508,7 +523,7 @@ function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
             </label>
           </div>
           <div className="composer-footer">
-            <span><Cloud /> 仅保存在当前页面内存，离开模块即释放</span>
+            <span><Cloud /> 当前标签页内存 · 切换栏目不中断，刷新后释放</span>
             <button className="button button-primary generate-button" onClick={handleGenerate} disabled={loading}>
               {loading ? <><LoaderCircle className="spin" /> 正在分析</> : <>生成专业结果 <WandSparkles /></>}
             </button>
