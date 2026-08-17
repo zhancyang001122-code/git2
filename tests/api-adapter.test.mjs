@@ -231,11 +231,12 @@ test('保存 AI 渲染结果时真实图片随资产保留在当前会话', () =
   const asset = createAssetRecord(
     { id: 'render', nav: 'AI 渲染' },
     '滨水入口蓝调时刻',
-    { model: 'gpt-image-2', images: [{ id: 1, title: '真实生成 · 主视角', meta: '2K', imageUrl: 'data:image/png;base64,ZmFrZQ==' }] },
+    { model: 'gpt-image-2', images: [1, 2, 3, 4].map((id) => ({ id, title: `真实生成 · 视角 ${id}`, meta: '2K', imageUrl: `data:image/png;base64,ZmFrZQ${id}==` })) },
     1001,
   )
   assert.equal(asset.id, 1001)
-  assert.equal(asset.files, 1)
+  assert.equal(asset.files, 3)
   assert.equal(asset.sessionOnly, true)
-  assert.equal(asset.artifacts[0].imageUrl, 'data:image/png;base64,ZmFrZQ==')
+  assert.equal(asset.artifacts.length, 3)
+  assert.equal(asset.artifacts[0].imageUrl, 'data:image/png;base64,ZmFrZQ1==')
 })

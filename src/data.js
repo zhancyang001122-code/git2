@@ -143,7 +143,7 @@ export function createAssetRecord(feature, prompt, result, id = Date.now()) {
   const meta = outputMeta[feature.id]
   const title = prompt.trim().slice(0, 18) || feature.nav.replace('AI ', '')
   const artifacts = feature.id === 'render'
-    ? (result?.images || []).slice(0, 1).map((image, index) => ({
+    ? (result?.images || []).slice(0, 3).map((image, index) => ({
         id: image.id || index + 1,
         name: `${title}-AI渲染图-${index + 1}.png`,
         title: image.title || 'AI 渲染图',
@@ -500,7 +500,7 @@ async function generateRenderImages({ prompt, files, config }) {
   const imageFile = files.find((file) => file.type?.startsWith('image/'))
   if (!imageFile) throw new Error('AI 渲染需要先上传一张白模或原始效果图。')
   const baseUrl = config.imageBaseUrl.replace(/\/$/, '')
-  const renderPrompt = `专业建筑可视化效果图。严格保留原始建筑主体、体量关系、相机视角和构图，只根据以下要求改善材质、景观、灯光与氛围：${prompt}。画面克制、真实、可用于建筑方案汇报，不添加文字或水印。`
+  const renderPrompt = `专业建筑可视化效果图。严格保留原始建筑主体、体量关系、相机视角和构图，只根据以下要求改善材质、景观、灯光与氛围：${prompt}。输出必须是一张连续、完整、清晰的画面；禁止水平条纹、扫描线、重复切片、错位拼接、重影、色带、画面撕裂或压缩伪影，不得复制或错位任何图像区域。画面克制、真实、可用于建筑方案汇报，不添加文字或水印。`
 
   if (imageFile.size > 15 * 1024 * 1024) throw new Error('渲染参考图超过 15MB，请压缩后重新上传。')
   const originalImageUrl = await fileToDataUrl(imageFile, 15)

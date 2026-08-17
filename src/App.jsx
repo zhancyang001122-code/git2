@@ -779,6 +779,16 @@ function ReportOutput({ onToast }) {
   )
 }
 
+function AssetPreviewVisual({ asset }) {
+  const previews = (asset.artifacts || []).filter((item) => item.imageUrl).slice(0, 3)
+  if (!previews.length) return <span className="asset-folder" aria-hidden="true"><i/><i/><i/></span>
+  return (
+    <span className={`asset-thumbnail-stack is-${previews.length}`} aria-hidden="true">
+      {previews.map((item) => <img src={item.imageUrl} alt="" decoding="async" draggable="false" key={item.id} />)}
+    </span>
+  )
+}
+
 function AssetsView({ assets, onDialog, onNavigate }) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('全部')
@@ -806,7 +816,7 @@ function AssetsView({ assets, onDialog, onNavigate }) {
         <div className="asset-grid">
           {filtered.map((asset) => (
             <article className="asset-card" key={asset.id}>
-              <button className={`asset-preview tone-${asset.tone}`} onClick={() => onDialog({ type: 'asset', asset })} aria-label={`查看${asset.title}详情`}><span className="asset-folder"><i/><i/><i/></span><span className="asset-type">{asset.type}</span><span className="asset-count">{asset.files}<small>FILES</small></span></button>
+              <button className={`asset-preview tone-${asset.tone} ${asset.artifacts?.length ? 'has-generated-preview' : ''}`} onClick={() => onDialog({ type: 'asset', asset })} aria-label={`查看${asset.title}详情`}><AssetPreviewVisual asset={asset} /><span className="asset-type">{asset.type}</span><span className="asset-count">{asset.files}<small>FILES</small></span></button>
               <div className="asset-body"><div><small>{asset.source}</small><h2>{asset.title}</h2></div><div className="asset-meta"><span>{asset.time}</span><span>{asset.sessionOnly ? 'Session Asset' : 'Local POC'}</span></div><div className="asset-actions"><button className="button button-quiet" onClick={() => onDialog({ type: 'asset', asset })}>查看详情 <Eye /></button><button className="icon-button delete-icon" onClick={() => onDialog({ type: 'delete', asset })} aria-label={`删除${asset.title}`}><Trash2 /></button></div></div>
             </article>
           ))}
@@ -872,12 +882,13 @@ function Dialog({ data, onClose, onDelete, onToast, onApiChanged }) {
   }
 
   const asset = data.asset
-  const generatedArtifact = asset.artifacts?.[0]
+  const generatedArtifacts = (asset.artifacts || []).filter((item) => item.imageUrl).slice(0, 3)
+  const generatedArtifact = generatedArtifacts[0]
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="dialog-card asset-dialog" role="dialog" aria-modal="true" aria-labelledby="asset-title">
         <button ref={closeRef} className="icon-button dialog-close" onClick={onClose} aria-label="关闭"><X /></button>
-        <div className={`dialog-asset-preview tone-${asset.tone} ${generatedArtifact ? 'has-generated-asset' : ''}`}>{generatedArtifact ? <img src={generatedArtifact.imageUrl} alt={generatedArtifact.title} /> : <><span className="asset-folder"><i/><i/><i/></span><FileArchive /></>} {generatedArtifact && <span className="session-preview-badge"><Check /> 当前会话真实生成</span>}</div>
+        <div className={`dialog-asset-preview tone-${asset.tone} ${generatedArtifact ? 'has-generated-asset' : ''}`}>{generatedArtifact ? <img src={generatedArtifact.imageUrl} alt={generatedArtifact.title} decoding="async" draggable="false" /> : <><span className="asset-folder"><i/><i/><i/></span><FileArchive /></>} {generatedArtifact && <span className="session-preview-badge"><Check /> 当前会话真实生成</span>}</div>
         <div className="dialog-asset-copy"><span className="eyebrow">ASSET PACKAGE</span><h2 id="asset-title">{asset.title}</h2><p>由 {asset.source} 生成，包含可继续编辑的项目成果和过程记录。</p><dl><div><dt>资产类型</dt><dd>{asset.type}</dd></div><div><dt>文件数量</dt><dd>{asset.files} 个</dd></div><div><dt>更新时间</dt><dd>{asset.time}</dd></div></dl>{generatedArtifact && <div className="session-asset-file"><span><ImagePlus /></span><p><strong>{generatedArtifact.title}</strong><small>{generatedArtifact.meta} · 当前标签页内存，刷新后清除</small></p><button className="icon-button" onClick={() => downloadGeneratedAsset(generatedArtifact.imageUrl, generatedArtifact.name)} aria-label={`下载${generatedArtifact.title}`}><Download /></button></div>}<div className="dialog-actions"><button className="button button-secondary" onClick={() => generatedArtifact ? downloadGeneratedAsset(generatedArtifact.imageUrl, generatedArtifact.name) : downloadDemo(`${asset.title}.zip`)}>{generatedArtifact ? '下载生成图' : '下载资产'} <Download /></button><button className="button button-primary" onClick={onClose}>完成 <Check /></button></div></div>
       </section>
     </div>
