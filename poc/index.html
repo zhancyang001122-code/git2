@@ -1,0 +1,1069 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="editorial">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="ArchFlow AI 建筑方案设计与出图辅助平台视觉 POC" />
+  <title>ArchFlow — Visual POC</title>
+  <style>
+    :root {
+      --bg: #fff7e9;
+      --surface: #fffdf7;
+      --surface-2: #f7eed9;
+      --ink: #111111;
+      --muted: #746d64;
+      --accent: #f66f00;
+      --accent-2: #fccc3c;
+      --on-accent: #111111;
+      --border: #dacab6;
+      --sidebar: #111111;
+      --sidebar-ink: #fff7e9;
+      --sidebar-muted: #aaa49a;
+      --success: #2a7c55;
+      --danger: #b83b32;
+      --shadow: 0 18px 60px rgba(68, 48, 24, .12);
+      --shadow-soft: 0 8px 28px rgba(68, 48, 24, .08);
+      --radius-xs: 3px;
+      --radius-sm: 5px;
+      --radius-md: 8px;
+      --radius-lg: 18px;
+      --display: "Arial Black", "Helvetica Neue", Arial, sans-serif;
+      --body: "Helvetica Neue", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      --ease: cubic-bezier(.16, 1, .3, 1);
+      --sidebar-width: 244px;
+      color-scheme: light;
+    }
+
+    html[data-theme="blueprint"] {
+      --bg: #eef4f6;
+      --surface: #fbfdfe;
+      --surface-2: #dbe8ed;
+      --ink: #102a43;
+      --muted: #5b7082;
+      --accent: #0077b6;
+      --accent-2: #48cae4;
+      --on-accent: #ffffff;
+      --border: #b7cbd4;
+      --sidebar: #f8fbfc;
+      --sidebar-ink: #102a43;
+      --sidebar-muted: #627d98;
+      --success: #12735a;
+      --danger: #b4232c;
+      --shadow: 0 18px 60px rgba(16, 42, 67, .12);
+      --shadow-soft: 0 8px 28px rgba(16, 42, 67, .08);
+      --radius-xs: 0;
+      --radius-sm: 2px;
+      --radius-md: 4px;
+      --radius-lg: 8px;
+      --display: "Helvetica Neue", "PingFang SC", Arial, sans-serif;
+      color-scheme: light;
+    }
+
+    html[data-theme="night"] {
+      --bg: #0d0e0d;
+      --surface: #171816;
+      --surface-2: #22231f;
+      --ink: #f8f3e8;
+      --muted: #aaa49a;
+      --accent: #ff7a1a;
+      --accent-2: #ffd166;
+      --on-accent: #111111;
+      --border: #34362f;
+      --sidebar: rgba(18, 19, 17, .94);
+      --sidebar-ink: #f8f3e8;
+      --sidebar-muted: #8d8f85;
+      --success: #77d9a0;
+      --danger: #ff8379;
+      --shadow: 0 24px 80px rgba(0, 0, 0, .42);
+      --shadow-soft: 0 12px 36px rgba(0, 0, 0, .26);
+      --radius-xs: 6px;
+      --radius-sm: 10px;
+      --radius-md: 16px;
+      --radius-lg: 28px;
+      --display: "Arial Black", "Helvetica Neue", Arial, sans-serif;
+      color-scheme: dark;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--body);
+      font-size: 15px;
+      line-height: 1.5;
+      transition: background .35s var(--ease), color .35s var(--ease);
+    }
+
+    button, input, textarea, select { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--accent) 52%, transparent);
+      outline-offset: 2px;
+    }
+    [hidden] { display: none !important; }
+
+    .app-shell { min-height: 100dvh; }
+    .sidebar {
+      position: fixed;
+      inset: 0 auto 0 0;
+      width: var(--sidebar-width);
+      padding: 24px 16px 18px;
+      display: flex;
+      flex-direction: column;
+      background: var(--sidebar);
+      color: var(--sidebar-ink);
+      border-right: 1px solid color-mix(in srgb, var(--border) 48%, transparent);
+      z-index: 40;
+      transition: transform .3s var(--ease), background .35s var(--ease);
+    }
+
+    html[data-theme="blueprint"] .sidebar {
+      background-image:
+        linear-gradient(color-mix(in srgb, var(--accent) 8%, transparent) 1px, transparent 1px),
+        linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, transparent) 1px, transparent 1px);
+      background-size: 20px 20px;
+    }
+
+    html[data-theme="night"] .sidebar { backdrop-filter: blur(22px); }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 4px 8px 28px;
+    }
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      background: var(--accent);
+      color: var(--on-accent);
+      border-radius: var(--radius-sm);
+      transform: rotate(-3deg);
+    }
+    .brand-mark svg { width: 23px; height: 23px; }
+    .brand-name {
+      font-family: var(--display);
+      font-size: 19px;
+      letter-spacing: -.04em;
+      line-height: 1;
+    }
+    .brand-sub {
+      display: block;
+      margin-top: 5px;
+      color: var(--sidebar-muted);
+      font: 10px/1 var(--mono);
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .project-switcher {
+      margin: 0 4px 18px;
+      padding: 10px 11px;
+      border: 1px solid color-mix(in srgb, var(--sidebar-ink) 16%, transparent);
+      border-radius: var(--radius-md);
+      background: color-mix(in srgb, var(--sidebar-ink) 6%, transparent);
+    }
+    .project-switcher span { display: block; color: var(--sidebar-muted); font: 10px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+    .project-switcher strong { display: block; margin-top: 6px; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .nav-label { padding: 0 10px 8px; color: var(--sidebar-muted); font: 10px/1 var(--mono); text-transform: uppercase; letter-spacing: .12em; }
+    .nav-list { display: grid; gap: 3px; }
+    .nav-item {
+      width: 100%;
+      min-height: 42px;
+      padding: 0 11px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      color: var(--sidebar-muted);
+      border: 0;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      text-align: left;
+      transition: color .2s, background .2s, transform .2s;
+    }
+    .nav-item:hover { color: var(--sidebar-ink); background: color-mix(in srgb, var(--sidebar-ink) 7%, transparent); }
+    .nav-item:active { transform: translateY(1px); }
+    .nav-item.active { color: var(--on-accent); background: var(--accent); }
+    .nav-item svg { width: 18px; height: 18px; flex: 0 0 auto; stroke-width: 1.7; }
+    .nav-item span { font-size: 13px; font-weight: 550; }
+    .nav-spacer { height: 9px; }
+
+    .sidebar-bottom { margin-top: auto; display: grid; gap: 10px; }
+    .api-status {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 10px 11px;
+      border: 1px solid color-mix(in srgb, var(--sidebar-ink) 15%, transparent);
+      border-radius: var(--radius-md);
+      color: var(--sidebar-muted);
+      font-size: 11px;
+    }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-2); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-2) 16%, transparent); }
+    .profile {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 7px;
+    }
+    .avatar { width: 31px; height: 31px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); color: var(--ink); font: 700 11px var(--mono); }
+    .profile strong { display: block; font-size: 12px; }
+    .profile small { display: block; color: var(--sidebar-muted); font-size: 10px; }
+
+    .main-shell { min-height: 100dvh; margin-left: var(--sidebar-width); }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      height: 70px;
+      padding: 0 clamp(18px, 3vw, 42px);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      background: color-mix(in srgb, var(--bg) 88%, transparent);
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+      backdrop-filter: blur(18px);
+    }
+    .top-left { min-width: 0; display: flex; align-items: center; gap: 14px; }
+    .menu-button { display: none; width: 40px; height: 40px; place-items: center; border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-sm); }
+    .menu-button svg { width: 19px; }
+    .breadcrumb { min-width: 0; }
+    .breadcrumb small { display: block; color: var(--muted); font: 10px/1.2 var(--mono); text-transform: uppercase; letter-spacing: .1em; }
+    .breadcrumb strong { display: block; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+
+    .theme-switcher { display: flex; align-items: center; gap: 4px; padding: 4px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-soft); }
+    .theme-button {
+      min-width: 86px;
+      height: 34px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: calc(var(--radius-sm) - 1px);
+      background: transparent;
+      color: var(--muted);
+      font: 10px/1 var(--mono);
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      transition: background .2s, color .2s;
+    }
+    .theme-button:hover { color: var(--ink); }
+    .theme-button.active { color: var(--on-accent); background: var(--accent); }
+
+    .poc-badge { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font: 10px/1 var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+    .poc-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+
+    .content { width: min(1540px, 100%); margin: 0 auto; padding: clamp(24px, 4vw, 58px); }
+    .view { animation: viewIn .45s var(--ease) both; }
+    @keyframes viewIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+    .eyebrow { display: inline-flex; align-items: center; gap: 9px; color: var(--muted); font: 11px/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+    .eyebrow::before { content: ""; width: 22px; height: 1px; background: var(--accent); }
+    .page-heading { margin: 14px 0 0; font-family: var(--display); font-size: clamp(36px, 5.4vw, 84px); line-height: .96; letter-spacing: -.065em; max-width: 930px; }
+    .page-heading em { color: var(--accent); font-style: normal; }
+    .section-title { margin: 0; font-family: var(--display); font-size: clamp(25px, 3vw, 42px); line-height: 1.02; letter-spacing: -.045em; }
+    .section-copy { max-width: 650px; color: var(--muted); font-size: 15px; }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.04fr) minmax(420px, .96fr);
+      min-height: 570px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .hero-copy { padding: clamp(34px, 5vw, 72px); display: flex; flex-direction: column; justify-content: space-between; }
+    .hero-copy p { max-width: 610px; margin: 26px 0 0; color: var(--muted); font-size: clamp(16px, 1.3vw, 19px); line-height: 1.55; }
+    .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 34px; }
+    .btn {
+      min-height: 46px;
+      padding: 0 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      border: 1px solid transparent;
+      border-radius: var(--radius-sm);
+      font-weight: 650;
+      font-size: 13px;
+      transition: transform .2s var(--ease), box-shadow .2s, background .2s, color .2s;
+    }
+    .btn:hover { transform: translateY(-2px); box-shadow: var(--shadow-soft); }
+    .btn:active { transform: translateY(0); }
+    .btn-primary { background: var(--accent); color: var(--on-accent); }
+    .btn-secondary { background: var(--surface); color: var(--ink); border-color: var(--border); }
+    .btn-ghost { background: transparent; color: var(--ink); border-color: transparent; }
+    .btn svg { width: 17px; height: 17px; }
+
+    .hero-foot { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 48px; }
+    .hero-stat { padding-top: 12px; border-top: 1px solid var(--border); }
+    .hero-stat strong { display: block; font-family: var(--display); font-size: 22px; letter-spacing: -.04em; }
+    .hero-stat span { display: block; margin-top: 4px; color: var(--muted); font: 10px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .07em; }
+
+    .arch-visual { position: relative; min-height: 100%; overflow: hidden; background: var(--accent-2); isolation: isolate; }
+    .arch-visual::before { content: ""; position: absolute; width: 46%; aspect-ratio: 1; right: -7%; top: 8%; border-radius: 50%; background: color-mix(in srgb, white 82%, var(--accent-2)); opacity: .95; }
+    .arch-visual::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 42%, rgba(17, 17, 17, .18)); z-index: 5; pointer-events: none; }
+    .building { position: absolute; bottom: 0; background: color-mix(in srgb, var(--ink) 88%, transparent); box-shadow: inset -1px 0 rgba(255,255,255,.12); }
+    .building::after { content: ""; position: absolute; inset: 12px; background: repeating-linear-gradient(90deg, transparent 0 24px, color-mix(in srgb, var(--accent-2) 74%, transparent) 25px 28px); opacity: .42; }
+    .building-a { left: 7%; width: 31%; height: 57%; clip-path: polygon(0 15%, 100% 0, 100% 100%, 0 100%); }
+    .building-b { left: 35%; width: 38%; height: 76%; clip-path: polygon(0 8%, 83% 0, 100% 100%, 0 100%); }
+    .building-c { right: -6%; width: 38%; height: 49%; clip-path: polygon(0 0, 100% 16%, 100% 100%, 8% 100%); }
+    .visual-label { position: absolute; left: 26px; top: 24px; z-index: 8; padding: 8px 10px; background: var(--surface); color: var(--ink); border-radius: var(--radius-xs); font: 10px/1 var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+    .visual-index { position: absolute; right: 22px; bottom: 18px; z-index: 8; color: color-mix(in srgb, white 92%, transparent); font: 11px/1 var(--mono); }
+
+    html[data-theme="blueprint"] .arch-visual {
+      background:
+        linear-gradient(color-mix(in srgb, white 82%, transparent), color-mix(in srgb, white 82%, transparent)),
+        repeating-linear-gradient(0deg, transparent 0 29px, color-mix(in srgb, var(--accent) 18%, transparent) 30px),
+        repeating-linear-gradient(90deg, transparent 0 29px, color-mix(in srgb, var(--accent) 18%, transparent) 30px),
+        var(--accent-2);
+    }
+    html[data-theme="blueprint"] .arch-visual::before { border: 1px solid var(--accent); background: transparent; }
+    html[data-theme="blueprint"] .building { background: color-mix(in srgb, var(--accent) 15%, transparent); border: 2px solid var(--accent); box-shadow: none; }
+    html[data-theme="blueprint"] .building::after { background: repeating-linear-gradient(90deg, transparent 0 24px, var(--accent) 25px 26px); opacity: .2; }
+
+    html[data-theme="night"] .arch-visual { background: radial-gradient(circle at 73% 21%, #ff9c45 0 8%, transparent 27%), linear-gradient(155deg, #342115 0%, #131513 52%, #080908 100%); }
+    html[data-theme="night"] .arch-visual::before { background: #ff9c45; filter: blur(18px); opacity: .55; }
+    html[data-theme="night"] .building { background: linear-gradient(90deg, #252825, #111310); border-top: 1px solid #5e5146; }
+
+    .home-section { margin-top: clamp(56px, 7vw, 100px); }
+    .section-head { display: flex; justify-content: space-between; align-items: end; gap: 22px; margin-bottom: 24px; }
+    .section-head .section-copy { margin: 0; }
+    .module-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .module-card {
+      min-height: 220px;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      text-align: left;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+      transition: transform .25s var(--ease), background .25s, box-shadow .25s;
+    }
+    .module-card:hover { transform: translateY(-5px); box-shadow: var(--shadow); background: color-mix(in srgb, var(--surface) 84%, var(--accent-2)); }
+    .module-card .num { color: var(--muted); font: 10px/1 var(--mono); }
+    .module-icon { width: 42px; height: 42px; margin: 32px 0 23px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+    .module-icon svg { width: 21px; height: 21px; stroke-width: 1.6; }
+    .module-card h3 { margin: 0; font-size: 17px; letter-spacing: -.02em; }
+    .module-card p { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+    .module-card .arrow { margin-top: auto; align-self: flex-end; font-size: 18px; transition: transform .2s; }
+    .module-card:hover .arrow { transform: translateX(4px); }
+
+    .demo-path { display: grid; grid-template-columns: .78fr 1.22fr; gap: 14px; }
+    .path-intro { padding: clamp(26px, 4vw, 48px); border-radius: var(--radius-md); background: var(--accent); color: var(--on-accent); }
+    .path-intro .eyebrow { color: color-mix(in srgb, var(--on-accent) 65%, transparent); }
+    .path-intro .eyebrow::before { background: var(--on-accent); }
+    .path-intro h2 { margin: 58px 0 0; font-family: var(--display); font-size: clamp(30px, 4vw, 56px); line-height: .98; letter-spacing: -.05em; }
+    .path-steps { display: grid; grid-template-rows: repeat(3, 1fr); border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; background: var(--surface); }
+    .path-step { display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: 16px; padding: 22px; border-bottom: 1px solid var(--border); }
+    .path-step:last-child { border-bottom: 0; }
+    .step-no { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--border); font: 11px var(--mono); }
+    .path-step strong { display: block; font-size: 14px; }
+    .path-step span { color: var(--muted); font-size: 12px; }
+    .step-tag { padding: 5px 8px; background: var(--surface-2); border-radius: var(--radius-xs); font: 9px/1 var(--mono); text-transform: uppercase; }
+
+    .feature-header { display: flex; align-items: end; justify-content: space-between; gap: 30px; margin-bottom: 34px; }
+    .feature-header .page-heading { font-size: clamp(42px, 5vw, 72px); }
+    .feature-number { color: var(--muted); font: clamp(52px, 8vw, 116px)/.8 var(--mono); letter-spacing: -.08em; opacity: .28; }
+    .workspace-grid { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 16px; align-items: start; }
+    .workspace-main { min-width: 0; display: grid; gap: 16px; }
+    .panel { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-soft); }
+    .prompt-panel { padding: clamp(22px, 3vw, 34px); }
+    .panel-kicker { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 20px; }
+    .panel-kicker span { color: var(--muted); font: 10px/1 var(--mono); text-transform: uppercase; letter-spacing: .1em; }
+    .ai-label { display: inline-flex; align-items: center; gap: 7px; padding: 5px 8px; background: var(--surface-2); border-radius: var(--radius-xs); color: var(--ink) !important; letter-spacing: .04em !important; }
+    .ai-label::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+    .prompt-title { margin: 0 0 9px; font-size: 18px; letter-spacing: -.02em; }
+    .prompt-help { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+    .quick-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 14px; }
+    .chip { min-height: 30px; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--muted); font-size: 11px; transition: border .2s, color .2s, background .2s; }
+    .chip:hover { border-color: var(--accent); color: var(--ink); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+    .prompt-box { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); overflow: hidden; transition: border .2s, box-shadow .2s; }
+    .prompt-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent); }
+    .prompt-box textarea { width: 100%; min-height: 168px; padding: 18px; resize: vertical; border: 0; outline: 0; background: transparent; font-size: 15px; line-height: 1.62; }
+    .prompt-box textarea::placeholder { color: color-mix(in srgb, var(--muted) 74%, transparent); }
+    .prompt-tools { min-height: 52px; padding: 8px 9px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid var(--border); }
+    .tool-group { display: flex; gap: 6px; align-items: center; }
+    .icon-button { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted); }
+    .icon-button:hover { color: var(--ink); background: var(--surface-2); }
+    .icon-button svg { width: 17px; height: 17px; }
+    .char-count { color: var(--muted); font: 10px var(--mono); }
+    .upload-zone { margin-top: 12px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px dashed var(--border); border-radius: var(--radius-sm); color: var(--muted); background: color-mix(in srgb, var(--surface-2) 55%, transparent); }
+    .upload-zone strong { color: var(--ink); font-size: 12px; }
+    .upload-zone span { font-size: 11px; }
+    .upload-zone input { display: none; }
+    .upload-zone label { padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--surface); color: var(--ink); font-size: 11px; cursor: pointer; }
+    .prompt-bottom { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 18px; }
+    .privacy-note { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; }
+    .privacy-note svg { width: 14px; }
+    .generate-button { min-width: 156px; }
+    .generate-button.loading { pointer-events: none; opacity: .78; }
+    .spinner { width: 15px; height: 15px; border: 2px solid color-mix(in srgb, var(--on-accent) 28%, transparent); border-top-color: var(--on-accent); border-radius: 50%; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .guide-panel { position: sticky; top: 88px; overflow: hidden; }
+    .guide-top { padding: 24px; background: var(--accent); color: var(--on-accent); }
+    .guide-top .eyebrow { color: color-mix(in srgb, var(--on-accent) 68%, transparent); }
+    .guide-top .eyebrow::before { background: var(--on-accent); }
+    .guide-top h3 { margin: 32px 0 8px; font-family: var(--display); font-size: 29px; line-height: .98; letter-spacing: -.045em; }
+    .guide-top p { margin: 0; font-size: 12px; opacity: .74; }
+    .guide-list { padding: 8px 20px 18px; }
+    .guide-item { padding: 15px 0; border-bottom: 1px solid var(--border); }
+    .guide-item:last-child { border-bottom: 0; }
+    .guide-item-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .guide-item strong { font-size: 12px; }
+    .guide-tag { padding: 4px 6px; border-radius: var(--radius-xs); background: var(--surface-2); color: var(--muted); font: 9px/1 var(--mono); text-transform: uppercase; }
+    .guide-tag.required { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--accent); }
+    .guide-item p { margin: 7px 0 0; color: var(--muted); font-size: 11px; }
+    .guide-action { padding: 0 20px 20px; }
+    .guide-action .btn { width: 100%; }
+
+    .progress-panel { padding: 26px; }
+    .progress-line { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .progress-step { position: relative; padding-top: 13px; border-top: 2px solid var(--border); color: var(--muted); font-size: 11px; }
+    .progress-step.active, .progress-step.done { border-color: var(--accent); color: var(--ink); }
+    .progress-step.done::after { content: "✓"; position: absolute; top: -13px; right: 0; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; background: var(--accent); color: var(--on-accent); font-size: 10px; }
+
+    .result-panel { padding: clamp(22px, 3vw, 34px); }
+    .result-head { display: flex; align-items: start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+    .result-head h3 { margin: 0; font-size: 20px; letter-spacing: -.03em; }
+    .result-head p { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+    .demo-label { padding: 6px 8px; background: var(--accent-2); color: #111; border-radius: var(--radius-xs); font: 9px/1 var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+    .result-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .scheme-card { overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
+    .scheme-visual { position: relative; height: 168px; overflow: hidden; background: var(--surface-2); }
+    .scheme-visual::before, .scheme-visual::after { content: ""; position: absolute; bottom: 0; background: var(--ink); opacity: .84; }
+    .scheme-visual::before { left: 9%; width: 52%; height: 58%; clip-path: polygon(0 16%, 100% 0, 91% 100%, 0 100%); }
+    .scheme-visual::after { right: 8%; width: 44%; height: 76%; clip-path: polygon(12% 0, 100% 17%, 100% 100%, 0 100%); opacity: .58; }
+    .scheme-card:nth-child(2) .scheme-visual { background: color-mix(in srgb, var(--accent-2) 56%, var(--surface)); }
+    .scheme-card:nth-child(3) .scheme-visual { background: color-mix(in srgb, var(--accent) 22%, var(--surface)); }
+    .scheme-body { padding: 14px; }
+    .scheme-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font: 9px var(--mono); text-transform: uppercase; }
+    .scheme-body h4 { margin: 16px 0 6px; font-size: 14px; }
+    .scheme-body p { margin: 0; color: var(--muted); font-size: 11px; }
+    .result-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+
+    .asset-toolbar { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin: 28px 0 22px; }
+    .search-wrap { min-width: min(340px, 100%); display: flex; align-items: center; gap: 9px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
+    .search-wrap svg { width: 17px; color: var(--muted); }
+    .search-wrap input { width: 100%; height: 42px; border: 0; outline: 0; background: transparent; font-size: 12px; }
+    .filter-row { display: flex; gap: 7px; flex-wrap: wrap; }
+    .filter-button { height: 36px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--muted); font-size: 11px; }
+    .filter-button.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+    .asset-summary { display: grid; grid-template-columns: 1.3fr repeat(3, .7fr); gap: 10px; margin-top: 32px; }
+    .summary-card { min-height: 104px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
+    .summary-card:first-child { background: var(--accent); color: var(--on-accent); }
+    .summary-card span { display: block; font: 9px/1 var(--mono); text-transform: uppercase; letter-spacing: .08em; opacity: .68; }
+    .summary-card strong { display: block; margin-top: 22px; font-family: var(--display); font-size: 26px; letter-spacing: -.045em; }
+    .asset-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .package-card { min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-soft); transition: transform .25s var(--ease), box-shadow .25s; }
+    .package-card:hover { transform: translateY(-5px); box-shadow: var(--shadow); }
+    .package-cover { position: relative; height: 214px; overflow: hidden; background: var(--surface-2); }
+    .package-cover::after { content: ""; position: absolute; inset: auto 0 0; height: 42%; background: linear-gradient(transparent, rgba(0,0,0,.28)); pointer-events: none; }
+    .sheet { position: absolute; width: 46%; height: 70%; top: 17%; border: 1px solid color-mix(in srgb, white 56%, transparent); border-radius: calc(var(--radius-sm) + 2px); box-shadow: 0 18px 35px rgba(0,0,0,.22); overflow: hidden; }
+    .sheet::before { content: ""; position: absolute; inset: 0; background: linear-gradient(150deg, transparent 0 34%, rgba(255,255,255,.22) 35% 43%, transparent 44%), repeating-linear-gradient(90deg, transparent 0 18px, rgba(255,255,255,.16) 19px 20px); }
+    .sheet.one { left: 8%; transform: rotate(-8deg); background: #53727f; }
+    .sheet.two { left: 28%; top: 11%; transform: rotate(1deg); background: #d1a96f; z-index: 2; }
+    .sheet.three { right: 5%; transform: rotate(8deg); background: #764c3f; z-index: 1; }
+    .package-card[data-tone="cool"] .sheet.one { background: #5f7a8c; }
+    .package-card[data-tone="cool"] .sheet.two { background: #b9d5db; }
+    .package-card[data-tone="cool"] .sheet.three { background: #2f4f5f; }
+    .package-card[data-tone="orange"] .sheet.one { background: #c95622; }
+    .package-card[data-tone="orange"] .sheet.two { background: #f3b35b; }
+    .package-card[data-tone="orange"] .sheet.three { background: #673629; }
+    .package-card[data-tone="green"] .sheet.one { background: #314e40; }
+    .package-card[data-tone="green"] .sheet.two { background: #9fb7a1; }
+    .package-card[data-tone="green"] .sheet.three { background: #d3c7a5; }
+    .cover-badge { position: absolute; z-index: 5; left: 14px; bottom: 13px; padding: 6px 8px; border-radius: var(--radius-xs); background: rgba(17,17,17,.78); color: white; font: 9px/1 var(--mono); text-transform: uppercase; letter-spacing: .07em; backdrop-filter: blur(8px); }
+    .package-body { padding: 17px; }
+    .package-title-row { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
+    .package-title-row h3 { min-width: 0; margin: 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .more-button { flex: 0 0 auto; width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 50%; background: transparent; color: var(--muted); }
+    .more-button svg { width: 14px; }
+    .package-meta { display: flex; justify-content: space-between; gap: 10px; margin-top: 18px; color: var(--muted); font: 9px/1.4 var(--mono); text-transform: uppercase; letter-spacing: .04em; }
+    .package-meta span:last-child { text-align: right; }
+
+    .toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      z-index: 90;
+      max-width: 360px;
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      transform: translateY(20px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .25s, transform .25s var(--ease);
+    }
+    .toast.show { opacity: 1; transform: none; }
+    .toast-icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: var(--success); color: white; }
+    .toast strong { display: block; font-size: 12px; }
+    .toast span { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+
+    .dialog-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.54); backdrop-filter: blur(8px); }
+    .dialog { width: min(680px, 100%); max-height: min(720px, 88dvh); overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: 0 30px 100px rgba(0,0,0,.38); }
+    .dialog-head { display: flex; justify-content: space-between; gap: 16px; align-items: start; padding: 24px; border-bottom: 1px solid var(--border); }
+    .dialog-head h2 { margin: 6px 0 0; font-size: 22px; letter-spacing: -.035em; }
+    .dialog-close { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 50%; background: transparent; }
+    .dialog-close svg { width: 16px; }
+    .dialog-content { padding: 24px; }
+    .dialog-preview { height: 280px; border-radius: var(--radius-md); background: linear-gradient(145deg, var(--accent-2), color-mix(in srgb, var(--accent) 42%, var(--ink))); position: relative; overflow: hidden; }
+    .dialog-preview::before { content: ""; position: absolute; width: 64%; height: 74%; bottom: 0; left: 19%; background: var(--ink); clip-path: polygon(0 15%, 85% 0, 100% 100%, 10% 100%); opacity: .78; }
+    .dialog-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+    .dialog-stat { padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+    .dialog-stat span { display: block; color: var(--muted); font: 9px var(--mono); text-transform: uppercase; }
+    .dialog-stat strong { display: block; margin-top: 10px; font-size: 13px; }
+
+    @media (max-width: 1180px) {
+      .hero-grid { grid-template-columns: 1fr .82fr; }
+      .module-grid, .asset-grid { grid-template-columns: repeat(2, 1fr); }
+      .workspace-grid { grid-template-columns: minmax(0, 1fr) 280px; }
+      .theme-button { min-width: 68px; }
+      .poc-badge { display: none; }
+    }
+
+    @media (max-width: 900px) {
+      :root { --sidebar-width: 228px; }
+      .sidebar { transform: translateX(-102%); box-shadow: 20px 0 70px rgba(0,0,0,.22); }
+      .sidebar.open { transform: none; }
+      .main-shell { margin-left: 0; }
+      .menu-button { display: grid; }
+      .topbar { height: auto; min-height: 68px; flex-wrap: wrap; padding-block: 12px; }
+      .theme-switcher { order: 3; width: 100%; }
+      .theme-button { flex: 1; }
+      .hero-grid { grid-template-columns: 1fr; }
+      .arch-visual { min-height: 390px; }
+      .workspace-grid { grid-template-columns: 1fr; }
+      .guide-panel { position: static; }
+      .guide-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+      .guide-item { border-bottom: 0; }
+      .asset-summary { grid-template-columns: repeat(2, 1fr); }
+      .sidebar-scrim { position: fixed; inset: 0; z-index: 35; background: rgba(0,0,0,.42); }
+    }
+
+    @media (max-width: 640px) {
+      .content { padding: 22px 16px 42px; }
+      .hero-copy { padding: 28px 22px; }
+      .page-heading { font-size: clamp(42px, 14vw, 62px); }
+      .hero-foot { grid-template-columns: 1fr; }
+      .arch-visual { min-height: 310px; }
+      .module-grid, .asset-grid { grid-template-columns: 1fr; }
+      .section-head, .feature-header, .asset-toolbar, .prompt-bottom, .result-head { align-items: stretch; flex-direction: column; }
+      .demo-path { grid-template-columns: 1fr; }
+      .path-step { grid-template-columns: 44px 1fr; }
+      .step-tag { grid-column: 2; justify-self: start; }
+      .workspace-grid { gap: 12px; }
+      .guide-list { grid-template-columns: 1fr; }
+      .result-grid { grid-template-columns: 1fr; }
+      .asset-summary { grid-template-columns: 1fr 1fr; }
+      .filter-row { width: 100%; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 3px; }
+      .filter-button { white-space: nowrap; }
+      .search-wrap { width: 100%; min-width: 0; }
+      .feature-number { display: none; }
+      .topbar { padding-inline: 14px; }
+      .breadcrumb strong { max-width: 180px; }
+      .toast { right: 14px; left: 14px; bottom: 14px; }
+      .dialog-stats { grid-template-columns: 1fr; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="主导航">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 19 9 5l4 9 3-6 5 11"/><path d="M5 16h14"/></svg>
+        </div>
+        <div>
+          <div class="brand-name">ArchFlow</div>
+          <span class="brand-sub">Enterprise Design Copilot</span>
+        </div>
+      </div>
+      <div class="project-switcher">
+        <span>Enterprise workspace</span>
+        <strong>江南水岸文化中心</strong>
+      </div>
+      <div class="nav-label">Workspace</div>
+      <nav class="nav-list" id="primaryNav"></nav>
+      <div class="sidebar-bottom">
+        <button class="api-status" id="apiStatusButton" type="button" aria-label="查看 API 接口状态">
+          <span class="status-dot"></span>
+          <span>POC MODE · API RESERVED</span>
+        </button>
+        <div class="profile">
+          <div class="avatar">ZC</div>
+          <div><strong>ArchFlow Design Lab</strong><small>方案一组 · 12 members</small></div>
+        </div>
+      </div>
+    </aside>
+    <div class="sidebar-scrim" id="sidebarScrim" hidden></div>
+
+    <div class="main-shell">
+      <header class="topbar">
+        <div class="top-left">
+          <button class="menu-button" id="menuButton" type="button" aria-label="打开导航">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+          </button>
+          <div class="breadcrumb"><small>ArchFlow / Visual POC</small><strong id="breadcrumbTitle">首页概览</strong></div>
+        </div>
+        <div class="poc-badge">Enterprise workflow · API adapter ready</div>
+        <div class="theme-switcher" role="group" aria-label="视觉方案">
+          <button class="theme-button active" data-theme-value="editorial" type="button">01 Editorial</button>
+          <button class="theme-button" data-theme-value="blueprint" type="button">02 Blueprint</button>
+          <button class="theme-button" data-theme-value="night" type="button">03 Night</button>
+        </div>
+      </header>
+      <main class="content" id="appContent" tabindex="-1"></main>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite">
+    <div class="toast-icon">✓</div>
+    <div><strong id="toastTitle">已保存</strong><span id="toastMessage">生成结果已加入“我的”</span></div>
+  </div>
+
+  <div class="dialog-backdrop" id="assetDialog" role="dialog" aria-modal="true" aria-labelledby="assetDialogTitle" hidden>
+    <div class="dialog">
+      <div class="dialog-head">
+        <div><span class="eyebrow">Asset package</span><h2 id="assetDialogTitle">项目资产包</h2></div>
+        <button class="dialog-close" data-close-dialog type="button" aria-label="关闭详情">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="dialog-content" id="assetDialogContent"></div>
+    </div>
+  </div>
+
+  <script>
+    const icon = (name) => {
+      const paths = {
+        home: '<path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10M9 20v-6h6v6"/>',
+        spark: '<path d="m12 3 1.3 4.2L17 9l-3.7 1.8L12 15l-1.3-4.2L7 9l3.7-1.8L12 3Z"/><path d="m19 15 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15ZM5 3l.7 1.8L7.5 5 5.7 5.7 5 7.5l-.7-1.8L2.5 5l1.8-.7L5 3Z"/>',
+        pen: '<path d="m4 20 4.2-1 10.6-10.6a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"/><path d="m13.8 7.4 3 3M4 20h6"/>',
+        image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m21 15-5-5L5 20"/>',
+        cube: '<path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 7 9 5 9-5M3 12l9 5 9-5M3 17l9 5 9-5"/>',
+        sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>',
+        report: '<path d="M5 3h11l3 3v15H5z"/><path d="M16 3v4h4M8 12h8M8 16h8M8 8h3"/>',
+        folder: '<path d="M3 6h7l2 2h9v11H3z"/>',
+        paperclip: '<path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/>',
+        send: '<path d="m22 2-7 20-4-9-9-4 20-7Z"/><path d="M22 2 11 13"/>',
+        shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/>',
+        search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
+        dots: '<circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/>',
+        arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+        close: '<path d="m6 6 12 12M18 6 6 18"/>'
+      };
+      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">${paths[name] || paths.spark}</svg>`;
+    };
+
+    const features = [
+      {
+        id: 'inspiration', nav: 'AI 方案灵感', title: '让场地，先开口说话。', short: '设计方向、案例检索与 Mood Board', icon: 'spark', number: '01', upload: true,
+        chips: ['文化综合体', '江南水乡', '2 万㎡', '地域现代', '滨水场地'],
+        sample: '为一座位于江南水乡的 2 万㎡文化综合体寻找方案灵感。场地临水、有旧工业遗存，希望公共空间具有开放性，建筑语言体现地域现代感。请给出 3 个设计方向、空间策略、材料关键词与可参考的案例类型。',
+        hints: [
+          ['项目与规模', '必填', '建筑类型、面积、层数或高度'],
+          ['场地特征', '建议', '临水、高差、旧改、朝向与周边关系'],
+          ['设计期待', '建议', '关键词、风格、希望解决的问题'],
+          ['参考资料', '可选', '任务书、基地照片或意向图']
+        ]
+      },
+      {
+        id: 'design', nav: 'AI 方案设计', title: '把模糊目标，变成三条路径。', short: 'A/B/C 概念方案、体量与专业比选', icon: 'pen', number: '02', upload: true,
+        chips: ['办公塔楼', '3 万㎡', '60m', '高效平面', '城市地标'],
+        sample: '生成一座 3 万㎡、高度 60m 的总部办公楼概念方案。用地南侧临城市公园，主入口朝东，希望兼顾高效标准层、开放共享空间与清晰的城市地标形象。请提出 A/B/C 三个差异化方案并做专业比选。',
+        hints: [
+          ['基本指标', '必填', '建筑类型、面积、用地面积、高度'],
+          ['基地条件', '必填', '出入口、景观面、日照与周边约束'],
+          ['设计目标', '建议', '效率、形象、公共性或可持续目标'],
+          ['任务资料', '可选', '任务书或文字/PDF 资料']
+        ]
+      },
+      {
+        id: 'beautify', nav: 'AI 图纸美化', title: '保留设计，只提升表达。', short: '总图 / 平面图填彩与层次增强', icon: 'image', number: '03', upload: true,
+        chips: ['总平面图', '低饱和', '景观增强', '道路分级', '竞赛图纸'],
+        sample: '美化这张建筑总平面图，保持建筑轮廓、道路和空间布局不变。采用低饱和竞赛图纸风格，增强建筑、道路、水体和绿地层次，补充适量树木与阴影，画面干净、克制。',
+        hints: [
+          ['原始图纸', '必填', '上传总图或平面图的清晰截图'],
+          ['图纸类型', '必填', '说明是总图、平面或分析图'],
+          ['视觉风格', '建议', '配色、饱和度、线稿或竞赛表达'],
+          ['保持不变', '建议', '明确不修改的轮廓、道路与布局']
+        ]
+      },
+      {
+        id: 'model', nav: 'AI 建模', title: '从二维证据，重建空间。', short: '图片 / CAD 到可编辑基础模型', icon: 'cube', number: '04', upload: true,
+        chips: ['SketchUp', 'Rhino', '基础体块', '立面开窗', '层高 4.2m'],
+        sample: '根据上传的平面、立面和建筑参考图生成可编辑的基础建筑模型。建筑共 4 层，标准层高 4.2m，优先保证体块比例、层高、主要开口与中庭位置，目标格式为 SketchUp .skp。',
+        hints: [
+          ['几何依据', '必填', '平立剖、模型截图或多角度参考图'],
+          ['关键尺寸', '建议', '总高、层高、开间与主要进深'],
+          ['建模范围', '建议', '体块、开窗、结构或室内细节等级'],
+          ['目标格式', '必填', 'SketchUp .skp 或 Rhino .3dm']
+        ]
+      },
+      {
+        id: 'render', nav: 'AI 渲染', title: '让白模，拥有真实时间。', short: '材质、光影、景观与氛围生成', icon: 'sun', number: '05', upload: true,
+        chips: ['建筑外观', '清晨', '清水混凝土', '湿润景观', '写实'],
+        sample: '将上传的白模渲染为清晨建筑外观效果图。保持原建筑主体、视角和构图不变，使用浅灰清水混凝土、深色金属窗框与湿润景观，补充少量人物和薄雾，整体写实、安静、有电影感。',
+        hints: [
+          ['白模图片', '必填', '上传清晰模型截图并说明视角'],
+          ['材质体系', '建议', '主材、辅材、玻璃与细部质感'],
+          ['时间氛围', '建议', '清晨、黄昏、阴天、季节与天气'],
+          ['保持关系', '必填', '强调主体、体块、视角与构图不变']
+        ]
+      },
+      {
+        id: 'report', nav: 'AI 汇报', title: '把项目，讲成一个故事。', short: '自动选图、文案与作品集式排版', icon: 'report', number: '06', upload: true,
+        chips: ['竞赛汇报', 'A3 横版', '12 页', '设计逻辑', '克制留白'],
+        sample: '为“江南水岸文化中心”生成一套 12 页 A3 横版方案汇报。面向设计评审，叙事顺序为场地问题、概念生成、总体布局、空间策略、效果呈现。排版强调大图、短标题和克制留白。',
+        hints: [
+          ['项目身份', '必填', '名称、类型、地点与一句话概念'],
+          ['汇报对象', '建议', '甲方、竞赛评委、课程评图或面试官'],
+          ['图片素材', '必填', '总图、平面、分析图、效果图与模型图'],
+          ['版式目标', '建议', '页数、尺寸、横竖版与视觉气质']
+        ]
+      }
+    ];
+
+    const navItems = [
+      { id: 'home', label: '首页概览', icon: 'home' },
+      ...features.map(f => ({ id: f.id, label: f.nav, icon: f.icon })),
+      { id: 'mine', label: '我的资产', icon: 'folder', divider: true }
+    ];
+
+    let assets = [
+      { id: 1, title: '江南水岸文化中心', type: '灵感库', files: 8, time: '刚刚更新', source: 'AI 方案灵感', tone: 'green' },
+      { id: 2, title: '城市总部办公塔楼', type: '方案库', files: 12, time: '昨天 18:24', source: 'AI 方案设计', tone: 'cool' },
+      { id: 3, title: '山地美术馆表达集', type: '渲染图库', files: 6, time: '08 月 15 日', source: 'AI 渲染', tone: 'orange' },
+      { id: 4, title: '社区中心总图优化', type: '图纸库', files: 4, time: '08 月 14 日', source: 'AI 图纸美化', tone: 'cool' },
+      { id: 5, title: '滨水展馆基础模型', type: '模型库', files: 3, time: '08 月 12 日', source: 'AI 建模', tone: 'green' },
+      { id: 6, title: '毕业设计答辩图册', type: '汇报库', files: 18, time: '08 月 10 日', source: 'AI 汇报', tone: 'orange' }
+    ];
+
+    const state = { view: 'home', activeFeature: null, generated: {}, assetFilter: '全部', assetSearch: '' };
+    const nav = document.getElementById('primaryNav');
+    const content = document.getElementById('appContent');
+    const breadcrumb = document.getElementById('breadcrumbTitle');
+
+    function renderNav() {
+      nav.innerHTML = navItems.map(item => `${item.divider ? '<div class="nav-spacer"></div><div class="nav-label">Library</div>' : ''}
+        <button class="nav-item ${state.view === item.id ? 'active' : ''}" type="button" data-view="${item.id}">
+          ${icon(item.icon)}<span>${item.label}</span>
+        </button>`).join('');
+      nav.querySelectorAll('[data-view]').forEach(btn => btn.addEventListener('click', () => navigate(btn.dataset.view)));
+    }
+
+    function navigate(view) {
+      state.view = view;
+      state.activeFeature = features.find(f => f.id === view) || null;
+      renderNav();
+      renderView();
+      closeSidebar();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      content.focus({ preventScroll: true });
+    }
+
+    function renderView() {
+      if (state.view === 'home') {
+        breadcrumb.textContent = '首页概览';
+        renderHome();
+      } else if (state.view === 'mine') {
+        breadcrumb.textContent = '我的资产';
+        renderMine();
+      } else {
+        breadcrumb.textContent = state.activeFeature.nav;
+        renderFeature(state.activeFeature);
+      }
+    }
+
+    function renderHome() {
+      content.innerHTML = `<div class="view">
+        <section class="hero-grid">
+          <div class="hero-copy">
+            <div>
+              <span class="eyebrow">Enterprise Architecture Workflow / 2026</span>
+              <h1 class="page-heading">从第一句想法，<br>到最后一张<em>图。</em></h1>
+              <p>ArchFlow 面向建筑设计企业，把方案灵感、概念设计、图纸表达、建模、渲染与汇报接进同一个工作流。设计师负责判断，AI 加速重复劳动，成果持续沉淀为团队资产。</p>
+              <div class="hero-actions">
+                <button class="btn btn-primary" type="button" data-go="inspiration">开始一个方案 ${icon('arrow')}</button>
+                <button class="btn btn-secondary" type="button" data-go="mine">查看我的资产</button>
+              </div>
+            </div>
+            <div class="hero-foot">
+              <div class="hero-stat"><strong>06</strong><span>AI Modules</span></div>
+              <div class="hero-stat"><strong>01</strong><span>End-to-end workflow</span></div>
+              <div class="hero-stat"><strong>100%</strong><span>Traceable assets</span></div>
+            </div>
+          </div>
+          <div class="arch-visual" aria-label="抽象建筑视觉">
+            <span class="visual-label">Selected work · 01</span>
+            <div class="building building-a"></div><div class="building building-b"></div><div class="building building-c"></div>
+            <span class="visual-index">31.2304° N · 121.4737° E</span>
+          </div>
+        </section>
+
+        <section class="home-section">
+          <div class="section-head">
+            <div><span class="eyebrow">Capabilities</span><h2 class="section-title">六个能力，服务团队的一次设计判断。</h2></div>
+            <p class="section-copy">每个模块都可以独立进入；建议优先体验“灵感 → 方案 → 保存资产”，看清从任务输入到企业资产归档的完整闭环。</p>
+          </div>
+          <div class="module-grid">
+            ${features.map(f => `<button class="module-card" type="button" data-go="${f.id}">
+              <span class="num">${f.number} / 06</span><span class="module-icon">${icon(f.icon)}</span>
+              <h3>${f.nav}</h3><p>${f.short}</p><span class="arrow">→</span>
+            </button>`).join('')}
+          </div>
+        </section>
+
+        <section class="home-section demo-path">
+          <div class="path-intro"><span class="eyebrow">Recommended workflow</span><h2>三步跑通<br>设计闭环。</h2></div>
+          <div class="path-steps">
+            <div class="path-step"><span class="step-no">01</span><div><strong>读懂建筑任务</strong><span>自然语言 + 专业结构化提示</span></div><span class="step-tag">Input</span></div>
+            <div class="path-step"><span class="step-no">02</span><div><strong>生成可比较的方案结果</strong><span>A/B/C 方向、体量与空间策略</span></div><span class="step-tag">AI Result</span></div>
+            <div class="path-step"><span class="step-no">03</span><div><strong>沉淀到企业资产库</strong><span>项目包、版本、来源与多类型资产</span></div><span class="step-tag">Saved</span></div>
+          </div>
+        </section>
+      </div>`;
+      content.querySelectorAll('[data-go]').forEach(el => el.addEventListener('click', () => navigate(el.dataset.go)));
+    }
+
+    function renderFeature(feature) {
+      const generated = state.generated[feature.id];
+      content.innerHTML = `<div class="view">
+        <header class="feature-header">
+          <div><span class="eyebrow">${feature.nav} / Guided input</span><h1 class="page-heading">${feature.title}</h1><p class="section-copy">${feature.short}。输入围绕企业项目约束组织，结果保留任务依据与生成来源；本页不上传文件或调用真实 API。</p></div>
+          <div class="feature-number">${feature.number}</div>
+        </header>
+        <div class="workspace-grid">
+          <div class="workspace-main">
+            <section class="panel prompt-panel">
+              <div class="panel-kicker"><span>01 · Describe your task</span><span class="ai-label">AI Assistant</span></div>
+              <h2 class="prompt-title">告诉 ArchFlow 你现在需要完成什么</h2>
+              <p class="prompt-help">可以像向项目组交代任务一样描述；右侧会区分必填、建议与可选信息，减少团队反复补充条件。</p>
+              <div class="quick-chips">${feature.chips.map(c => `<button class="chip" type="button" data-chip="${c}">+ ${c}</button>`).join('')}</div>
+              <div class="prompt-box">
+                <textarea id="promptInput" aria-label="任务描述" maxlength="1200" placeholder="例如：${feature.sample.slice(0, 64)}…">${generated?.prompt || ''}</textarea>
+                <div class="prompt-tools">
+                  <div class="tool-group"><button class="icon-button" type="button" id="attachButton" aria-label="添加参考文件">${icon('paperclip')}</button><span class="char-count"><span id="charCount">${generated?.prompt?.length || 0}</span> / 1200</span></div>
+                  <span class="char-count">支持自然语言 · 中文 / English</span>
+                </div>
+              </div>
+              ${feature.upload ? `<div class="upload-zone"><div><strong id="fileLabel">添加任务资料或参考图片</strong><br><span>PNG, JPG, PDF, DWG · 本地演示不上传</span></div><label for="demoFile">选择文件</label><input id="demoFile" type="file" multiple /></div>` : ''}
+              <div class="prompt-bottom">
+                <span class="privacy-note">${icon('shield')} 文件只用于本地 POC 展示</span>
+                <button class="btn btn-primary generate-button" id="generateButton" type="button">生成演示结果 ${icon('send')}</button>
+              </div>
+            </section>
+            <section class="panel progress-panel" id="progressPanel" ${generated ? '' : 'hidden'}>
+              <div class="progress-line"><div class="progress-step done">理解项目条件</div><div class="progress-step done">组织专业提示</div><div class="progress-step done">生成演示结果</div></div>
+            </section>
+            <section class="panel result-panel" id="resultPanel" ${generated ? '' : 'hidden'}>${generated ? resultMarkup(feature) : ''}</section>
+          </div>
+          <aside class="panel guide-panel" aria-label="建议输入内容">
+            <div class="guide-top"><span class="eyebrow">Better input</span><h3>怎样描述，<br>效果最好？</h3><p>信息越具体，AI 越能保留你的设计判断。</p></div>
+            <div class="guide-list">${feature.hints.map(h => `<div class="guide-item"><div class="guide-item-head"><strong>${h[0]}</strong><span class="guide-tag ${h[1] === '必填' ? 'required' : ''}">${h[1]}</span></div><p>${h[2]}</p></div>`).join('')}</div>
+            <div class="guide-action"><button class="btn btn-secondary" id="fillExample" type="button">填入完整示例</button></div>
+          </aside>
+        </div>
+      </div>`;
+      bindFeatureEvents(feature);
+    }
+
+    function bindFeatureEvents(feature) {
+      const textarea = document.getElementById('promptInput');
+      const count = document.getElementById('charCount');
+      textarea.addEventListener('input', () => count.textContent = textarea.value.length);
+      document.querySelectorAll('[data-chip]').forEach(chip => chip.addEventListener('click', () => {
+        const value = chip.dataset.chip;
+        textarea.value = textarea.value.trim() ? `${textarea.value.trim()}，${value}` : value;
+        textarea.dispatchEvent(new Event('input'));
+        textarea.focus();
+      }));
+      document.getElementById('fillExample').addEventListener('click', () => {
+        textarea.value = feature.sample;
+        textarea.dispatchEvent(new Event('input'));
+        textarea.focus();
+      });
+      document.getElementById('attachButton').addEventListener('click', () => document.getElementById('demoFile')?.click());
+      document.getElementById('demoFile')?.addEventListener('change', (event) => {
+        const files = [...event.target.files];
+        document.getElementById('fileLabel').textContent = files.length ? `已选择 ${files.length} 个文件：${files.map(f => f.name).slice(0, 2).join('、')}` : '添加任务资料或参考图片';
+      });
+      document.getElementById('generateButton').addEventListener('click', () => simulateGeneration(feature, textarea.value.trim()));
+      bindResultEvents(feature);
+    }
+
+    async function generateWithApi({ feature, prompt, files = [], options = {} }) {
+      // API ADAPTER RESERVED:
+      // Replace this local response with the real text/image/model/export API.
+      // Keep UI code independent from the provider response through this adapter.
+      await new Promise(resolve => setTimeout(resolve, 1850));
+      return { ok: true, mode: 'demo', feature, prompt, files, options, createdAt: new Date().toISOString() };
+    }
+
+    async function simulateGeneration(feature, prompt) {
+      const textarea = document.getElementById('promptInput');
+      if (!prompt) {
+        textarea.focus();
+        showToast('还缺少任务描述', '可以点击右侧“填入完整示例”快速体验。', false);
+        return;
+      }
+      const button = document.getElementById('generateButton');
+      const progress = document.getElementById('progressPanel');
+      const result = document.getElementById('resultPanel');
+      button.classList.add('loading');
+      button.innerHTML = '<span class="spinner"></span> 正在生成';
+      progress.hidden = false;
+      result.hidden = true;
+      progress.innerHTML = '<div class="progress-line"><div class="progress-step active">理解项目条件</div><div class="progress-step">组织专业提示</div><div class="progress-step">生成演示结果</div></div>';
+      setTimeout(() => { const s = progress.querySelectorAll('.progress-step'); s[0].className = 'progress-step done'; s[1].className = 'progress-step active'; }, 560);
+      setTimeout(() => { const s = progress.querySelectorAll('.progress-step'); s[1].className = 'progress-step done'; s[2].className = 'progress-step active'; }, 1120);
+      const response = await generateWithApi({ feature: feature.id, prompt });
+      state.generated[feature.id] = { ...response, prompt };
+      const steps = progress.querySelectorAll('.progress-step');
+      steps.forEach(s => s.className = 'progress-step done');
+      result.innerHTML = resultMarkup(feature);
+      result.hidden = false;
+      button.classList.remove('loading');
+      button.innerHTML = `重新生成 ${icon('send')}`;
+      bindResultEvents(feature);
+      result.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function resultMarkup(feature) {
+      const titles = feature.id === 'inspiration'
+        ? ['水巷织城', '院落叠合', '连续地景']
+        : feature.id === 'design'
+          ? ['偏置核心', '垂直中庭', '板式错动']
+          : feature.id === 'beautify'
+            ? ['低饱和总图', '景观层次', '道路分级']
+            : feature.id === 'model'
+              ? ['基础体块', '层高关系', '开口系统']
+              : feature.id === 'render'
+                ? ['清晨薄雾', '材料光感', '湿润景观']
+                : ['叙事封面', '概念生成', '成果汇总'];
+      return `<div class="result-head"><div><h3>${feature.nav} · 演示结果</h3><p>以下为 POC 本地样本，用于验证展示结构与保存闭环。</p></div><span class="demo-label">Demo sample</span></div>
+        <div class="result-grid">${titles.map((title, index) => `<article class="scheme-card"><div class="scheme-visual"></div><div class="scheme-body"><div class="scheme-meta"><span>Option ${String.fromCharCode(65 + index)}</span><span>0${index + 1}</span></div><h4>${title}</h4><p>${feature.id === 'report' ? '自动生成短标题、说明文字与大图版式。' : '保留项目约束，同时建立清晰且可解释的设计差异。'}</p></div></article>`).join('')}</div>
+        <div class="result-actions"><button class="btn btn-secondary" type="button" data-regenerate>重新生成</button><button class="btn btn-primary" type="button" data-save-result>保存到“我的” ${icon('arrow')}</button></div>`;
+    }
+
+    function bindResultEvents(feature) {
+      document.querySelector('[data-regenerate]')?.addEventListener('click', () => document.getElementById('generateButton')?.click());
+      document.querySelector('[data-save-result]')?.addEventListener('click', () => saveResult(feature));
+    }
+
+    function saveResult(feature) {
+      const map = { inspiration: '灵感库', design: '方案库', beautify: '图纸库', model: '模型库', render: '渲染图库', report: '汇报库' };
+      const titleMap = { inspiration: '新建灵感方向', design: '新建概念方案', beautify: '新建图纸表达', model: '新建基础模型', render: '新建渲染成果', report: '新建汇报图册' };
+      assets.unshift({ id: Date.now(), title: titleMap[feature.id], type: map[feature.id], files: 3, time: '刚刚保存', source: feature.nav, tone: ['green','cool','orange'][assets.length % 3] });
+      showToast('已保存到“我的”', `${titleMap[feature.id]}已加入${map[feature.id]}。`);
+    }
+
+    function renderMine() {
+      const types = ['全部', '灵感库', '方案库', '图纸库', '模型库', '渲染图库', '汇报库'];
+      content.innerHTML = `<div class="view">
+        <header class="feature-header"><div><span class="eyebrow">Enterprise archive / Project packages</span><h1 class="page-heading">所有生成，<br>都沉淀为团队可复用的<em>资产。</em></h1><p class="section-copy">按项目包组织图片、模型和汇报成果，并保留资产类型、生成来源、更新时间与版本线索。</p></div><div class="feature-number">07</div></header>
+        <div class="asset-summary"><div class="summary-card"><span>Total assets</span><strong>${assets.reduce((sum,a) => sum + a.files, 0)} files</strong></div><div class="summary-card"><span>Project packages</span><strong>${assets.length}</strong></div><div class="summary-card"><span>Generated this week</span><strong>18</strong></div><div class="summary-card"><span>Storage</span><strong>2.4 GB</strong></div></div>
+        <div class="asset-toolbar"><div class="search-wrap">${icon('search')}<input id="assetSearch" type="search" placeholder="搜索项目包或资产类型" value="${escapeHtml(state.assetSearch)}" aria-label="搜索资产" /></div><div class="filter-row">${types.map(t => `<button class="filter-button ${state.assetFilter === t ? 'active' : ''}" type="button" data-filter="${t}">${t}</button>`).join('')}</div></div>
+        <div class="asset-grid" id="assetGrid"></div>
+      </div>`;
+      renderAssetGrid();
+      const assetSearch = document.getElementById('assetSearch');
+      const syncAssetSearch = event => { state.assetSearch = event.target.value; renderAssetGrid(); };
+      ['input', 'search', 'change'].forEach(eventName => assetSearch.addEventListener(eventName, syncAssetSearch));
+      document.querySelectorAll('[data-filter]').forEach(btn => btn.addEventListener('click', () => {
+        state.assetSearch = assetSearch.value;
+        state.assetFilter = btn.dataset.filter;
+        renderMine();
+      }));
+    }
+
+    function renderAssetGrid() {
+      const grid = document.getElementById('assetGrid');
+      if (!grid) return;
+      const query = state.assetSearch.trim().toLowerCase();
+      const filtered = assets.filter(a => (state.assetFilter === '全部' || a.type === state.assetFilter) && (!query || `${a.title}${a.type}${a.source}`.toLowerCase().includes(query)));
+      grid.innerHTML = filtered.length ? filtered.map(a => `<article class="package-card" data-tone="${a.tone}">
+        <button class="package-cover" type="button" data-asset-id="${a.id}" aria-label="打开${escapeHtml(a.title)}"><span class="sheet one"></span><span class="sheet two"></span><span class="sheet three"></span><span class="cover-badge">${a.type}</span></button>
+        <div class="package-body"><div class="package-title-row"><h3>${escapeHtml(a.title)}</h3><button class="more-button" type="button" data-asset-id="${a.id}" aria-label="查看${escapeHtml(a.title)}详情">${icon('dots')}</button></div><div class="package-meta"><span>${a.files} Files<br>${a.source}</span><span>${a.time}<br>Local POC</span></div></div>
+      </article>`).join('') : '<div class="panel prompt-panel"><h3>没有匹配的项目包</h3><p class="section-copy">换一个关键词或筛选条件试试。</p></div>';
+      grid.querySelectorAll('[data-asset-id]').forEach(btn => btn.addEventListener('click', () => openAsset(Number(btn.dataset.assetId))));
+    }
+
+    function openAsset(id) {
+      const asset = assets.find(a => a.id === id);
+      if (!asset) return;
+      document.getElementById('assetDialogTitle').textContent = asset.title;
+      document.getElementById('assetDialogContent').innerHTML = `<div class="dialog-preview"></div><div class="dialog-stats"><div class="dialog-stat"><span>Asset type</span><strong>${asset.type}</strong></div><div class="dialog-stat"><span>Files</span><strong>${asset.files} 个文件</strong></div><div class="dialog-stat"><span>Source</span><strong>${asset.source}</strong></div></div><div class="result-actions"><button class="btn btn-secondary" type="button">下载演示文件</button><button class="btn btn-primary" type="button" data-close-dialog>关闭</button></div>`;
+      const dialog = document.getElementById('assetDialog');
+      dialog.hidden = false;
+      dialog.querySelector('.dialog-close').focus();
+      dialog.querySelectorAll('[data-close-dialog]').forEach(btn => btn.addEventListener('click', closeDialog));
+    }
+
+    function closeDialog() { document.getElementById('assetDialog').hidden = true; }
+    document.querySelector('[data-close-dialog]').addEventListener('click', closeDialog);
+    document.getElementById('assetDialog').addEventListener('click', event => { if (event.target.id === 'assetDialog') closeDialog(); });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeDialog(); closeSidebar(); } });
+
+    function showToast(title, message, success = true) {
+      const toast = document.getElementById('toast');
+      document.getElementById('toastTitle').textContent = title;
+      document.getElementById('toastMessage').textContent = message;
+      toast.querySelector('.toast-icon').textContent = success ? '✓' : '!';
+      toast.querySelector('.toast-icon').style.background = success ? 'var(--success)' : 'var(--danger)';
+      toast.classList.add('show');
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => toast.classList.remove('show'), 3600);
+    }
+
+    function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char])); }
+
+    document.querySelectorAll('[data-theme-value]').forEach(btn => btn.addEventListener('click', () => {
+      const theme = btn.dataset.themeValue;
+      document.documentElement.dataset.theme = theme;
+      document.querySelectorAll('[data-theme-value]').forEach(b => b.classList.toggle('active', b === btn));
+      localStorage.setItem('archflow_poc_theme', theme);
+    }));
+
+    const savedTheme = localStorage.getItem('archflow_poc_theme');
+    if (['editorial','blueprint','night'].includes(savedTheme)) {
+      document.documentElement.dataset.theme = savedTheme;
+      document.querySelectorAll('[data-theme-value]').forEach(btn => btn.classList.toggle('active', btn.dataset.themeValue === savedTheme));
+    }
+
+    const sidebar = document.getElementById('sidebar');
+    const scrim = document.getElementById('sidebarScrim');
+    document.getElementById('menuButton').addEventListener('click', () => { sidebar.classList.add('open'); scrim.hidden = false; });
+    scrim.addEventListener('click', closeSidebar);
+    function closeSidebar() { sidebar.classList.remove('open'); scrim.hidden = true; }
+
+    document.getElementById('apiStatusButton').addEventListener('click', () => showToast('API 接口已预留', '本 POC 使用本地假数据，后续替换 generateWithApi 即可。'));
+
+    renderNav();
+    renderView();
+  </script>
+</body>
+</html>
