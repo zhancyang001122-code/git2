@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { File } from 'node:buffer'
 import test from 'node:test'
-import { generateWithApi } from '../src/data.js'
+import { checkModelConnection, generateWithApi } from '../src/data.js'
 
 let activeConfig = {}
 globalThis.window = {
@@ -9,6 +9,7 @@ globalThis.window = {
     getItem: () => JSON.stringify(activeConfig),
   },
   setTimeout,
+  clearTimeout,
 }
 globalThis.FileReader = class FileReader {
   readAsDataURL(file) {
@@ -21,7 +22,11 @@ globalThis.FileReader = class FileReader {
 
 const baseConfig = {
   enabled: true,
+  llmProvider: 'bailian',
+  llmModel: '6736696',
   llmApiKey: 'test-language-key',
+  imageProvider: 'yunfei',
+  imageModel: 'gpt-image-2',
   imageApiKey: 'test-image-key',
 }
 
@@ -48,9 +53,9 @@ test('方案灵感使用语言模型结构化结果', async () => {
   }
 
   const result = await generateWithApi({ feature: 'inspiration', prompt: '滨水文化中心', files: [] })
-  assert.equal(request.url, 'https://api.openai.com/v1/chat/completions')
+  assert.equal(request.url, 'https://ws-g9wsij6srpylaed0.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions')
   const payload = JSON.parse(request.options.body)
-  assert.equal(payload.model, 'gpt-5-mini')
+  assert.equal(payload.model, '6736696')
   assert.equal('temperature' in payload, false)
   assert.equal(result.mode, 'external-language-api')
   assert.equal(result.structured.directions.length, 3)
@@ -93,7 +98,7 @@ test('AI 渲染使用单张图生图接口并返回原图对比数据', async ()
 
   const image = new File([new Uint8Array([137, 80, 78, 71])], 'white-model.png', { type: 'image/png' })
   const result = await generateWithApi({ feature: 'render', prompt: '蓝调时刻', files: [image] })
-  assert.equal(request.url, 'https://api.openai.com/v1/images/edits')
+  assert.equal(request.url, 'https://img.yunfei.best/v1/images/edits')
   assert.equal(request.options.body.get('model'), 'gpt-image-2')
   assert.equal(request.options.body.get('n'), '1')
   assert.equal(request.options.body.get('image').name, 'white-model.png')
@@ -101,4 +106,109 @@ test('AI 渲染使用单张图生图接口并返回原图对比数据', async ()
   assert.equal(result.images.length, 1)
   assert.match(result.images[0].imageUrl, /^data:image\/png;base64,/)
   assert.match(result.originalImageUrl, /^data:image\/png;base64,/)
+})
+
+test('官方 OpenAI 配置仍使用官方模型与端点', async () => {
+  activeConfig = {
+    ...baseConfig,
+    llmProvider: 'openai',
+    llmModel: 'ignored-custom-model',
+  }
+  let request
+  globalThis.fetch = async (url, options) => {
+    request = { url, options }
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: JSON.stringify({
+          coreConcept: '场地叙事',
+          directions: [0, 1, 2].map((index) => ({ title: `方向${index}`, strategy: '策略', keywords: ['场地'] })),
+          sharedStrategies: ['开放首层'],
+          caseIds: ['panlong'],
+        }) } }],
+      }),
+    }
+  }
+
+  const result = await generateWithApi({ feature: 'inspiration', prompt: '文化中心', files: [] })
+  assert.equal(request.url, 'https://api.openai.com/v1/chat/completions')
+  assert.equal(JSON.parse(request.options.body).model, 'gpt-5-mini')
+  assert.equal(result.model, 'gpt-5-mini')
+})
+
+test('Gemini 生图协议支持参考图输入与图片响应', async () => {
+  activeConfig = {
+    ...baseConfig,
+    imageProvider: 'gemini',
+    imageModel: 'ignored-custom-model',
+  }
+  let request
+  globalThis.fetch = async (url, options) => {
+    request = { url, options }
+    return {
+      ok: true,
+      json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: 'ZmFrZQ==' } }] } }] }),
+    }
+  }
+
+  const image = new File([new Uint8Array([137, 80, 78, 71])], 'reference.png', { type: 'image/png' })
+  const result = await generateWithApi({ feature: 'render', prompt: '暖色夜景', files: [image] })
+  assert.equal(request.url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent')
+  assert.equal(request.options.headers['x-goog-api-key'], 'test-image-key')
+  assert.match(result.images[0].imageUrl, /^data:image\/png;base64,/)
+})
+
+test('应用 Key 使用模型列表验证鉴权与模型可见性', async () => {
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, 'https://img.yunfei.best/v1/models')
+    assert.equal(options.headers.Authorization, 'Bearer test-image-key')
+    return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-2' }] }) }
+  }
+
+  const result = await checkModelConnection('image', {
+    provider: 'yunfei',
+    model: 'gpt-image-2',
+    apiKey: 'test-image-key',
+  })
+  assert.equal(result.model, 'gpt-image-2')
+  assert.match(result.message, /已连接/)
+})
+
+test('百炼应用 Key 用最小对话同时验证 Key 与模型 ID', async () => {
+  let request
+  globalThis.fetch = async (url, options) => {
+    request = { url, options }
+    return { ok: true, json: async () => ({ choices: [{ message: { content: 'OK' } }] }) }
+  }
+
+  const result = await checkModelConnection('language', {
+    provider: 'bailian',
+    model: '6736696',
+    apiKey: 'test-language-key',
+  })
+  assert.equal(request.url, 'https://ws-g9wsij6srpylaed0.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions')
+  assert.equal(JSON.parse(request.options.body).model, '6736696')
+  assert.equal(result.model, '6736696')
+})
+
+test('第三方 NewAPI 的 Gemini 生图模型自动改走原生 Gemini 端点', async () => {
+  activeConfig = {
+    ...baseConfig,
+    imageProvider: 'yunfei',
+    imageModel: 'gemini-3.1-flash-image',
+  }
+  let request
+  globalThis.fetch = async (url, options) => {
+    request = { url, options }
+    return {
+      ok: true,
+      json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: 'ZmFrZQ==' } }] } }] }),
+    }
+  }
+
+  const image = new File([new Uint8Array([137, 80, 78, 71])], 'reference.png', { type: 'image/png' })
+  const result = await generateWithApi({ feature: 'render', prompt: '滨水夜景', files: [image] })
+  assert.equal(request.url, 'https://img.yunfei.best/v1beta/models/gemini-3.1-flash-image:generateContent')
+  assert.equal(request.options.headers.Authorization, 'Bearer test-image-key')
+  assert.match(result.images[0].imageUrl, /^data:image\/png;base64,/)
 })

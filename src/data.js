@@ -157,6 +157,164 @@ export const builtInModels = Object.freeze({
   }),
 })
 
+export const modelProviders = Object.freeze({
+  language: Object.freeze({
+    bailian: Object.freeze({
+      label: '阿里云百炼',
+      protocol: 'openai-chat',
+      baseUrl: 'https://ws-g9wsij6srpylaed0.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+      model: '6736696',
+      customBase: false,
+      customModel: true,
+    }),
+    openai: Object.freeze({
+      label: 'OpenAI 官方',
+      protocol: 'openai-chat',
+      baseUrl: builtInModels.language.baseUrl,
+      model: builtInModels.language.model,
+      customBase: false,
+      customModel: false,
+    }),
+    compatible: Object.freeze({
+      label: '第三方 OpenAI 兼容',
+      protocol: 'openai-chat',
+      baseUrl: '',
+      model: '',
+      customBase: true,
+      customModel: true,
+    }),
+  }),
+  image: Object.freeze({
+    yunfei: Object.freeze({
+      label: '第三方生图服务',
+      protocol: 'newapi-auto',
+      baseUrl: 'https://img.yunfei.best',
+      model: 'gpt-image-2',
+      customBase: false,
+      customModel: true,
+    }),
+    openai: Object.freeze({
+      label: 'OpenAI 官方',
+      protocol: 'openai-images',
+      baseUrl: builtInModels.image.baseUrl,
+      model: builtInModels.image.model,
+      customBase: false,
+      customModel: false,
+    }),
+    compatible: Object.freeze({
+      label: '第三方 Images 兼容',
+      protocol: 'openai-images',
+      baseUrl: '',
+      model: '',
+      customBase: true,
+      customModel: true,
+    }),
+    gemini: Object.freeze({
+      label: 'Gemini 官方',
+      protocol: 'gemini-generate',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      model: 'gemini-3.1-flash-image',
+      customBase: false,
+      customModel: false,
+    }),
+    geminiCompatible: Object.freeze({
+      label: '第三方 Gemini 原生',
+      protocol: 'newapi-gemini',
+      baseUrl: '',
+      model: '',
+      customBase: true,
+      customModel: true,
+    }),
+  }),
+})
+
+export function resolveModelConnection(kind, values = {}) {
+  const providerId = values.provider || (kind === 'language' ? 'bailian' : 'yunfei')
+  const preset = modelProviders[kind]?.[providerId]
+  if (!preset) throw new Error('未知的模型服务来源。')
+  return {
+    provider: providerId,
+    providerLabel: preset.label,
+    protocol: preset.protocol,
+    baseUrl: String(preset.customBase ? values.baseUrl || '' : preset.baseUrl).replace(/\/$/, ''),
+    model: String(preset.customModel ? values.model || preset.model || '' : preset.model).trim(),
+  }
+}
+
+function connectionErrorMessage(status, detail) {
+  if (status === 401) return 'API Key 无效或已失效，请重新检查。'
+  if (status === 403) return 'API Key 已识别，但当前项目没有该模型权限或尚未完成服务商验证。'
+  if (status === 429) return 'API Key 已识别，但当前账户额度、速率或账单状态受限。'
+  return `连接检查失败（${status}）：${detail || '服务未返回可读错误。'}`
+}
+
+function newApiRoot(baseUrl) {
+  return baseUrl.replace(/\/(?:v1|v1beta)$/, '')
+}
+
+function isGeminiImageModel(model) {
+  return /(gemini.*image|nano.?banana)/i.test(model)
+}
+
+export async function checkModelConnection(kind, values, { timeoutMs = 12000 } = {}) {
+  const apiKey = String(values.apiKey || '').trim()
+  const connection = resolveModelConnection(kind, values)
+  if (!apiKey) throw new Error(`请先填写${kind === 'language' ? '语言大模型' : '生图大模型'} API Key。`)
+  if (!connection.baseUrl || !connection.model) throw new Error('第三方服务需要填写 Base URL 和模型 ID。')
+
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const isLanguage = kind === 'language'
+    const isNewApi = connection.protocol === 'newapi-auto' || connection.protocol === 'newapi-gemini'
+    const endpoint = isLanguage
+      ? `${connection.baseUrl}/chat/completions`
+      : isNewApi
+        ? `${newApiRoot(connection.baseUrl)}/v1/models`
+        : `${connection.baseUrl}/models`
+    const headers = connection.protocol === 'gemini-generate'
+      ? { 'x-goog-api-key': apiKey }
+      : { Authorization: `Bearer ${apiKey}` }
+    const response = await fetch(endpoint, isLanguage
+      ? {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: connection.model,
+            messages: [{ role: 'user', content: '仅回复 OK' }],
+            stream: false,
+          }),
+          signal: controller.signal,
+        }
+      : { method: 'GET', headers, signal: controller.signal })
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 180)
+      throw new Error(connectionErrorMessage(response.status, detail))
+    }
+    const payload = await response.json()
+    const modelIds = isLanguage ? [] : Array.isArray(payload.data)
+      ? payload.data.map((item) => item?.id).filter(Boolean)
+      : Array.isArray(payload.models)
+        ? payload.models.map((item) => String(item?.name || '').replace(/^models\//, '')).filter(Boolean)
+        : []
+    let resolvedModel = connection.model
+    if (modelIds.length && !modelIds.includes(resolvedModel)) {
+      const imageCandidates = kind === 'image'
+        ? modelIds.filter((id) => /(gpt-image|gemini.*image|imagen|flux|dall|nano.?banana)/i.test(id))
+        : []
+      if (imageCandidates.length) resolvedModel = imageCandidates[0]
+      else throw new Error(`API Key 已通过鉴权，但当前项目未开放 ${resolvedModel}。`)
+    }
+    return { ...connection, model: resolvedModel, availableModels: modelIds, message: `已连接 · ${resolvedModel}` }
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error('连接检查超时，请确认当前网络或代理可以访问模型服务。')
+    if (error instanceof TypeError) throw new Error('无法连接模型服务，请检查网络节点、Base URL 或浏览器跨域限制。')
+    throw error
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
 const verifiedCaseIds = ['panlong', 'tank', 'longmuseum']
 
 function readConfig() {
@@ -164,13 +322,27 @@ function readConfig() {
     const stored = JSON.parse(window.sessionStorage.getItem('archflow-api-config') || '{}')
     const llmApiKey = stored.llmApiKey || stored.apiKey || ''
     const imageApiKey = stored.imageApiKey || stored.apiKey || ''
+    const language = resolveModelConnection('language', {
+      provider: stored.llmProvider || 'bailian',
+      baseUrl: stored.llmBaseUrl,
+      model: stored.llmModel,
+    })
+    const image = resolveModelConnection('image', {
+      provider: stored.imageProvider || 'yunfei',
+      baseUrl: stored.imageBaseUrl,
+      model: stored.imageModel,
+    })
     return {
       enabled: Boolean(stored.enabled && llmApiKey && imageApiKey),
-      llmBaseUrl: builtInModels.language.baseUrl,
-      llmModel: builtInModels.language.model,
+      llmProvider: language.provider,
+      llmProtocol: language.protocol,
+      llmBaseUrl: language.baseUrl,
+      llmModel: language.model,
       llmApiKey,
-      imageBaseUrl: builtInModels.image.baseUrl,
-      imageModel: builtInModels.image.model,
+      imageProvider: image.provider,
+      imageProtocol: image.protocol,
+      imageBaseUrl: image.baseUrl,
+      imageModel: image.model,
       imageApiKey,
       imageSize: builtInModels.image.size,
     }
@@ -295,17 +467,65 @@ async function generateRenderImages({ prompt, files, config }) {
   if (!imageFile) throw new Error('AI 渲染需要先上传一张白模或原始效果图。')
   const baseUrl = config.imageBaseUrl.replace(/\/$/, '')
   const renderPrompt = `专业建筑可视化效果图。严格保留原始建筑主体、体量关系、相机视角和构图，只根据以下要求改善材质、景观、灯光与氛围：${prompt}。画面克制、真实、可用于建筑方案汇报，不添加文字或水印。`
-  let response
 
   if (imageFile.size > 15 * 1024 * 1024) throw new Error('渲染参考图超过 15MB，请压缩后重新上传。')
   const originalImageUrl = await fileToDataUrl(imageFile, 15)
+
+  const useGeminiProtocol = config.imageProtocol === 'gemini-generate'
+    || config.imageProtocol === 'newapi-gemini'
+    || (config.imageProtocol === 'newapi-auto' && isGeminiImageModel(config.imageModel))
+
+  if (useGeminiProtocol) {
+    const base64Image = originalImageUrl.split(',')[1]
+    const isNativeGoogle = config.imageProtocol === 'gemini-generate'
+    const geminiBaseUrl = isNativeGoogle ? baseUrl : `${newApiRoot(baseUrl)}/v1beta`
+    const response = await fetch(`${geminiBaseUrl}/models/${encodeURIComponent(config.imageModel)}:generateContent`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(isNativeGoogle
+          ? { 'x-goog-api-key': config.imageApiKey }
+          : { Authorization: `Bearer ${config.imageApiKey}` }),
+      },
+      body: JSON.stringify({
+        contents: [{ parts: [
+          { inlineData: { mimeType: imageFile.type, data: base64Image } },
+          { text: renderPrompt },
+        ] }],
+        generationConfig: {
+          responseModalities: ['IMAGE'],
+          imageConfig: { aspectRatio: '16:9', imageSize: '2K' },
+        },
+      }),
+    })
+    if (!response.ok) {
+      const detail = await response.text()
+      throw new Error(`Gemini 生图 API ${response.status}: ${detail.slice(0, 160)}`)
+    }
+    const payload = await response.json()
+    const parts = payload.candidates?.[0]?.content?.parts || []
+    const imagePart = parts.find((part) => part.inlineData?.data || part.inline_data?.data)
+    const inlineData = imagePart?.inlineData || imagePart?.inline_data
+    if (!inlineData?.data) throw new Error('Gemini API 已响应，但没有返回可显示的图片。')
+    return {
+      originalImageUrl,
+      images: [{
+        id: 1,
+        title: '真实生成 · 主视角',
+        meta: `${config.imageModel} · 2K`,
+        imageUrl: `data:${inlineData.mimeType || inlineData.mime_type || 'image/png'};base64,${inlineData.data}`,
+      }],
+    }
+  }
+
   const form = new FormData()
   form.append('model', config.imageModel)
   form.append('prompt', renderPrompt)
   form.append('image', imageFile, imageFile.name)
   form.append('n', '1')
   form.append('size', config.imageSize)
-  response = await fetch(`${baseUrl}/images/edits`, {
+  const imageBaseUrl = config.imageProtocol === 'newapi-auto' ? `${newApiRoot(baseUrl)}/v1` : baseUrl
+  const response = await fetch(`${imageBaseUrl}/images/edits`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${config.imageApiKey}` },
     body: form,

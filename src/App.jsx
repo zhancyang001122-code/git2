@@ -38,7 +38,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import { features, generateWithApi, initialAssets, navItems, outputMeta } from './data.js'
+import { checkModelConnection, features, generateWithApi, initialAssets, modelProviders, navItems, outputMeta, resolveModelConnection } from './data.js'
 
 const validRoutes = new Set(navItems.map((item) => item.id))
 
@@ -349,10 +349,12 @@ function WorkspaceScene() {
 function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
   const [prompt, setPrompt] = useState('')
   const [files, setFiles] = useState([])
+  const [dragActive, setDragActive] = useState(false)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [selectedScheme, setSelectedScheme] = useState(null)
   const outputRef = useRef(null)
+  const dragDepth = useRef(0)
 
   const useChip = (chip) => {
     setPrompt((current) => current ? `${current}，${chip}` : chip)
@@ -363,8 +365,12 @@ function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
       file.type?.startsWith('image/') || /\.(pdf|dwg|dxf)$/i.test(file.name)
     ))
     if (!supportedFiles.length) return 0
-    setFiles((current) => [...current, ...supportedFiles].slice(0, 6))
-    return supportedFiles.length
+    const existing = new Set(files.map((file) => `${file.name}-${file.size}-${file.lastModified}`))
+    const addedFiles = supportedFiles
+      .filter((file) => !existing.has(`${file.name}-${file.size}-${file.lastModified}`))
+      .slice(0, Math.max(0, 6 - files.length))
+    if (addedFiles.length) setFiles((current) => [...current, ...addedFiles].slice(0, 6))
+    return addedFiles.length
   }
 
   const handlePaste = (event) => {
@@ -378,6 +384,37 @@ function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
     event.preventDefault()
     const added = appendFiles(pastedImages)
     onToast({ title: '已粘贴图片', detail: `${added} 张图片已加入本次临时附件，可直接用于识图或渲染。` })
+  }
+
+  const handleDragEnter = (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    dragDepth.current += 1
+    if (event.dataTransfer?.types?.includes('Files')) setDragActive(true)
+  }
+
+  const handleDragLeave = (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    dragDepth.current = Math.max(0, dragDepth.current - 1)
+    if (dragDepth.current === 0) setDragActive(false)
+  }
+
+  const handleDragOver = (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+  }
+
+  const handleDrop = (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    dragDepth.current = 0
+    setDragActive(false)
+    const added = appendFiles(event.dataTransfer?.files)
+    onToast(added
+      ? { title: '拖拽上传成功', detail: `${added} 个文件已加入本次临时附件。` }
+      : { title: '没有可添加的文件', detail: '支持 JPG、PNG、WEBP、PDF、DWG 和 DXF，最多保留 6 个。' })
   }
 
   const handleGenerate = async () => {
@@ -441,7 +478,13 @@ function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
             <span>快速补充</span>
             <div>{feature.chips.map((chip) => <button key={chip} onClick={() => useChip(chip)}>{chip}<Plus /></button>)}</div>
           </div>
-          <div className="upload-zone">
+          <div
+            className={`upload-zone ${dragActive ? 'is-dragging' : ''}`}
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+          >
             <input
               id={`files-${feature.id}`}
               className="sr-only"
@@ -455,9 +498,10 @@ function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
             />
             <label htmlFor={`files-${feature.id}`}>
               <span className="upload-icon"><UploadCloud /></span>
-              <span><strong>{files.length ? `已加载 ${files.length} 个临时文件` : '上传项目资料'}</strong><small>{files.length ? '可继续选择，最多保留 6 个；也可在输入框内按 Ctrl + V 粘贴图片' : 'JPG / PNG 支持选择或 Ctrl + V 粘贴；PDF / DWG 当前仅记录文件名'}</small></span>
+              <span><strong>{files.length ? `已加载 ${files.length} 个临时文件` : '上传项目资料'}</strong><small>{files.length ? '可继续选择、拖入文件或按 Ctrl + V 粘贴图片，最多保留 6 个' : '选择、拖拽或 Ctrl + V 均可上传；PDF / DWG 当前仅记录文件名'}</small></span>
               <span className="button button-quiet upload-button">选择文件{files.length > 0 && <em>{files.length}</em>}</span>
             </label>
+            <div className="drop-overlay" aria-hidden={!dragActive}><UploadCloud /><strong>松开即可加入本次任务</strong><small>最多 6 个临时文件</small></div>
           </div>
           <div className="composer-footer">
             <span><Cloud /> 仅保存在当前页面内存，离开模块即释放</span>
@@ -839,28 +883,96 @@ function ProfileApiDialog({ closeRef, onClose, onToast, onApiChanged }) {
   const stored = window.sessionStorage.getItem('archflow-api-config')
   let initial = {}
   try { initial = stored ? JSON.parse(stored) : {} } catch { initial = {} }
+  const isCurrentConfig = initial.version >= 4
+  const [llmProvider, setLlmProvider] = useState(isCurrentConfig ? initial.llmProvider || 'bailian' : 'bailian')
+  const [llmBaseUrl, setLlmBaseUrl] = useState(isCurrentConfig ? initial.llmBaseUrl || modelProviders.language.bailian.baseUrl : modelProviders.language.bailian.baseUrl)
+  const [llmModel, setLlmModel] = useState(isCurrentConfig ? initial.llmModel || modelProviders.language.bailian.model : modelProviders.language.bailian.model)
   const [llmApiKey, setLlmApiKey] = useState(initial.llmApiKey || initial.apiKey || '')
+  const [imageProvider, setImageProvider] = useState(isCurrentConfig ? initial.imageProvider || 'yunfei' : 'yunfei')
+  const [imageBaseUrl, setImageBaseUrl] = useState(isCurrentConfig ? initial.imageBaseUrl || modelProviders.image.yunfei.baseUrl : modelProviders.image.yunfei.baseUrl)
+  const [imageModel, setImageModel] = useState(isCurrentConfig ? initial.imageModel || modelProviders.image.yunfei.model : modelProviders.image.yunfei.model)
   const [imageApiKey, setImageApiKey] = useState(initial.imageApiKey || initial.apiKey || '')
+  const [llmCheck, setLlmCheck] = useState(isCurrentConfig && initial.llmVerified
+    ? { status: 'success', message: `已连接 · ${initial.llmModel || modelProviders.language.bailian.model}` }
+    : { status: 'idle', message: '填写后点击“应用 Key”进行检查' })
+  const [imageCheck, setImageCheck] = useState(isCurrentConfig && initial.imageVerified
+    ? { status: 'success', message: `已连接 · ${initial.imageModel || modelProviders.image.yunfei.model}` }
+    : { status: 'idle', message: '填写后点击“应用 Key”进行检查' })
+
+  const llmProviderConfig = modelProviders.language[llmProvider]
+  const imageProviderConfig = modelProviders.image[imageProvider]
+
+  const resetCheck = (kind) => {
+    const next = { status: 'idle', message: '配置已修改，请重新应用检查' }
+    if (kind === 'language') setLlmCheck(next)
+    else setImageCheck(next)
+  }
+
+  const changeProvider = (kind, provider) => {
+    const config = modelProviders[kind][provider]
+    if (kind === 'language') {
+      setLlmProvider(provider)
+      setLlmBaseUrl(config.baseUrl)
+      setLlmModel(config.model)
+    } else {
+      setImageProvider(provider)
+      setImageBaseUrl(config.baseUrl)
+      setImageModel(config.model)
+    }
+    resetCheck(kind)
+  }
+
+  const applyKey = async (kind) => {
+    const isLanguage = kind === 'language'
+    const setCheck = isLanguage ? setLlmCheck : setImageCheck
+    const values = isLanguage
+      ? { provider: llmProvider, baseUrl: llmBaseUrl, model: llmModel, apiKey: llmApiKey }
+      : { provider: imageProvider, baseUrl: imageBaseUrl, model: imageModel, apiKey: imageApiKey }
+    setCheck({ status: 'checking', message: '正在检查鉴权与模型可见性…' })
+    try {
+      const connection = await checkModelConnection(kind, values)
+      if (isLanguage && connection.model !== llmModel) setLlmModel(connection.model)
+      if (!isLanguage && connection.model !== imageModel) setImageModel(connection.model)
+      setCheck({ status: 'success', message: connection.message })
+      onToast({ title: `${isLanguage ? '语言大模型' : '生图大模型'}已连接`, detail: `${connection.providerLabel} · ${connection.model}` })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '连接检查失败。'
+      setCheck({ status: 'error', message })
+      onToast({ title: `${isLanguage ? '语言大模型' : '生图大模型'}连接失败`, detail: message })
+    }
+  }
 
   const save = (event) => {
     event.preventDefault()
     const hasLanguageKey = Boolean(llmApiKey.trim())
     const hasImageKey = Boolean(imageApiKey.trim())
     if (hasLanguageKey !== hasImageKey) {
-      onToast({ title: '还缺少一个 API Key', detail: '语言大模型与生图大模型需要同时填写；如果同属一个 OpenAI 项目，可以填写相同 Key。' })
+      onToast({ title: '还缺少一个 API Key', detail: '语言大模型与生图大模型需要分别填写并应用；两项使用不同服务时，请使用各自的 Key。' })
+      return
+    }
+    if ((hasLanguageKey || hasImageKey) && (llmCheck.status !== 'success' || imageCheck.status !== 'success')) {
+      onToast({ title: '请先应用两把 Key', detail: '语言大模型与生图大模型都显示“已连接”后才能完成配置。' })
       return
     }
     const enabled = hasLanguageKey && hasImageKey
     window.sessionStorage.setItem('archflow-api-config', JSON.stringify({
       enabled,
-      version: 3,
+      version: 4,
+      llmProvider,
+      llmBaseUrl: resolveModelConnection('language', { provider: llmProvider, baseUrl: llmBaseUrl, model: llmModel }).baseUrl,
+      llmModel,
       llmApiKey: llmApiKey.trim(),
+      llmVerified: enabled,
+      imageProvider,
+      imageBaseUrl: resolveModelConnection('image', { provider: imageProvider, baseUrl: imageBaseUrl, model: imageModel }).baseUrl,
+      imageModel,
       imageApiKey: imageApiKey.trim(),
+      imageVerified: enabled,
     }))
     onApiChanged(enabled)
     onClose()
     onToast({
-      title: enabled ? '两类内置模型已启用' : '已切回本地演示',
+      title: enabled ? '两类真实模型已启用' : '已切回本地演示',
       detail: enabled ? '方案灵感、方案设计和 AI 渲染将使用真实接口。' : '密钥已清空，所有模块将继续使用本地演示数据。',
     })
   }
@@ -876,26 +988,44 @@ function ProfileApiDialog({ closeRef, onClose, onToast, onApiChanged }) {
         <div className="privacy-note"><BadgeCheck /><p><strong>用户信息已脱敏</strong><small>本站不展示真实姓名、邮箱或企业名称；当前身份统一以“方案一组”作为演示账号。</small></p></div>
         <form className="api-form" onSubmit={save}>
           <div className="api-form-head"><div><span className="eyebrow">BUILT-IN MODEL ACCESS</span><h3>连接两类真实生成能力</h3></div><span className="model-preset-badge"><BadgeCheck /> 模型已预设</span></div>
-          <p className="api-description">接口地址、模型名称和输出规格已由 ArchFlow 预设。你只需要填写两把 API Key；密钥仅保存在当前浏览器会话，关闭标签页后自动清除。</p>
+          <p className="api-description">默认已内置百炼与第三方生图服务，也可切换 OpenAI、Gemini 官方或其他兼容服务。Key 无法安全识别来源，因此服务来源与模型必须明确选择。</p>
           <div className="live-module-row"><span><BrainCircuit /> 方案灵感</span><span><BrainCircuit /> 方案设计</span><span><ImagePlus /> AI 渲染</span></div>
 
           <section className="api-group" aria-labelledby="llm-api-title">
-            <div className="api-group-title"><span><BrainCircuit /></span><div><h4 id="llm-api-title">语言大模型</h4><p>平台已内置结构化方案生成链路，用于方案灵感与方案设计。</p></div><em className="preset-state">PRESET</em></div>
+            <div className="api-group-title"><span><BrainCircuit /></span><div><h4 id="llm-api-title">语言大模型</h4><p>平台已内置百炼 OpenAI-compatible 链路，用于方案灵感与方案设计。</p></div><em className="preset-state">LANGUAGE</em></div>
             <div className="api-fields">
-              <label className="full-field"><span>语言大模型 API Key</span><input type="password" value={llmApiKey} onChange={(event) => setLlmApiKey(event.target.value)} placeholder="请输入语言大模型 API Key" autoComplete="off" /></label>
+              <label><span>服务来源</span><select value={llmProvider} onChange={(event) => changeProvider('language', event.target.value)}>{Object.entries(modelProviders.language).map(([id, provider]) => <option value={id} key={id}>{provider.label}</option>)}</select></label>
+              {llmProviderConfig.customBase
+                ? <label><span>Base URL</span><input value={llmBaseUrl} onChange={(event) => { setLlmBaseUrl(event.target.value); resetCheck('language') }} placeholder="https://provider.example/v1" /></label>
+                : <div className="preset-connection"><span>内置地址</span><strong>{llmProviderConfig.baseUrl}</strong></div>}
+              {llmProviderConfig.customModel && <label className="full-field"><span>模型 ID</span><input value={llmModel} onChange={(event) => { setLlmModel(event.target.value); resetCheck('language') }} placeholder="例如百炼模型 ID" /></label>}
+              <div className="api-key-field full-field">
+                <label htmlFor="llm-api-key">语言大模型 API Key</label>
+                <div className="api-key-control"><input id="llm-api-key" type="password" value={llmApiKey} onChange={(event) => { setLlmApiKey(event.target.value); resetCheck('language') }} placeholder="请输入语言大模型 API Key" autoComplete="off" /><button type="button" onClick={() => applyKey('language')} disabled={llmCheck.status === 'checking'}>{llmCheck.status === 'checking' ? <LoaderCircle className="spin" /> : <Link2 />} 应用 Key</button></div>
+                <p className={`connection-feedback is-${llmCheck.status}`} role="status">{llmCheck.status === 'success' ? <Check /> : llmCheck.status === 'checking' ? <LoaderCircle className="spin" /> : <Info />}<span>{llmCheck.message}</span></p>
+              </div>
             </div>
           </section>
 
           <section className="api-group" aria-labelledby="image-api-title">
-            <div className="api-group-title"><span><ImagePlus /></span><div><h4 id="image-api-title">生图大模型</h4><p>平台已内置参考图编辑链路，用于生成单张渲染图并进行前后对比。</p></div><em className="preset-state">PRESET</em></div>
+            <div className="api-group-title"><span><ImagePlus /></span><div><h4 id="image-api-title">生图大模型</h4><p>支持 OpenAI Images 与 Gemini GenerateContent 两类协议。</p></div><em className="preset-state">IMAGE</em></div>
             <div className="api-fields">
-              <label className="full-field"><span>生图大模型 API Key</span><input type="password" value={imageApiKey} onChange={(event) => setImageApiKey(event.target.value)} placeholder="请输入生图大模型 API Key" autoComplete="off" /></label>
+              <label><span>服务来源</span><select value={imageProvider} onChange={(event) => changeProvider('image', event.target.value)}>{Object.entries(modelProviders.image).map(([id, provider]) => <option value={id} key={id}>{provider.label}</option>)}</select></label>
+              {imageProviderConfig.customBase
+                ? <label><span>Base URL</span><input value={imageBaseUrl} onChange={(event) => { setImageBaseUrl(event.target.value); resetCheck('image') }} placeholder="https://provider.example/v1" /></label>
+                : <div className="preset-connection"><span>内置地址</span><strong>{imageProviderConfig.baseUrl}</strong></div>}
+              {imageProviderConfig.customModel && <label className="full-field"><span>模型 ID</span><input value={imageModel} onChange={(event) => { setImageModel(event.target.value); resetCheck('image') }} placeholder="例如 gpt-image-2 或服务商提供的 Gemini 模型 ID" /></label>}
+              <div className="api-key-field full-field">
+                <label htmlFor="image-api-key">生图大模型 API Key</label>
+                <div className="api-key-control"><input id="image-api-key" type="password" value={imageApiKey} onChange={(event) => { setImageApiKey(event.target.value); resetCheck('image') }} placeholder="请输入生图大模型 API Key" autoComplete="off" /><button type="button" onClick={() => applyKey('image')} disabled={imageCheck.status === 'checking'}>{imageCheck.status === 'checking' ? <LoaderCircle className="spin" /> : <Link2 />} 应用 Key</button></div>
+                <p className={`connection-feedback is-${imageCheck.status}`} role="status">{imageCheck.status === 'success' ? <Check /> : imageCheck.status === 'checking' ? <LoaderCircle className="spin" /> : <Info />}<span>{imageCheck.message}</span></p>
+              </div>
             </div>
           </section>
 
           <div className="session-storage-note"><Cloud /><p><strong>会话级隐私策略</strong><small>API Key 和上传文件不会写入 ArchFlow 数据库；关闭标签页后密钥清除，离开模块后附件释放。</small></p></div>
           <div className="security-hint"><Info /><span>当前公开演示采用访问者自己的 Key。不要把项目所有者的密钥写入源码或 Git；若要让访问者免填 Key，必须增加服务端代理。</span></div>
-          <div className="dialog-actions"><button className="button button-secondary" type="button" onClick={() => { setLlmApiKey(''); setImageApiKey('') }}>清空密钥</button><button className="button button-primary" type="submit">保存并连接 <Link2 /></button></div>
+          <div className="dialog-actions"><button className="button button-secondary" type="button" onClick={() => { setLlmApiKey(''); setImageApiKey(''); setLlmCheck({ status: 'idle', message: '密钥已清空' }); setImageCheck({ status: 'idle', message: '密钥已清空' }) }}>清空密钥</button><button className="button button-primary" type="submit">完成配置 <Check /></button></div>
         </form>
       </section>
     </div>
