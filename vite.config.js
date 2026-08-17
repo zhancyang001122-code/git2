@@ -1,7 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+const repositoryName = process.env.GITHUB_REPOSITORY?.split('/')[1]
+const publicBase = process.env.GITHUB_ACTIONS === 'true' && repositoryName ? `/${repositoryName}/` : '/'
+
 export default defineConfig({
+  base: publicBase,
   plugins: [react()],
   server: {
     host: '127.0.0.1',

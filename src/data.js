@@ -135,66 +135,250 @@ export const outputMeta = {
   design: { type: '方案库', files: 12, label: '3 套方案 · 专业比选' },
   beautify: { type: '图纸库', files: 4, label: '2 套表达 · 4K' },
   model: { type: '模型库', files: 3, label: 'SKP · 3DM · 质量报告' },
-  render: { type: '渲染图库', files: 6, label: '2 张效果图 · 4K' },
+  render: { type: '渲染图库', files: 3, label: '1 张效果图 · 原图对照 · 4K' },
   report: { type: '汇报库', files: 18, label: '12 页 · A3 / PPTX' },
 }
 
-export async function generateWithApi({ feature, prompt, files = [], options = {} }) {
-  const savedConfig = window.sessionStorage.getItem('archflow-api-config')
-  const config = savedConfig ? JSON.parse(savedConfig) : null
+export const liveFeatureIds = ['inspiration', 'design', 'render']
 
-  if (config?.enabled && config.baseUrl && config.apiKey && config.model) {
-    const endpoint = `${config.baseUrl.replace(/\/$/, '')}/chat/completions`
-    const featureName = features.find((item) => item.id === feature)?.nav || feature
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.apiKey}`,
+const presetEnv = import.meta.env || {}
+
+export const builtInModels = Object.freeze({
+  language: Object.freeze({
+    label: '语言大模型',
+    baseUrl: presetEnv.VITE_LLM_BASE_URL || 'https://api.openai.com/v1',
+    model: presetEnv.VITE_LLM_MODEL || 'gpt-5-mini',
+  }),
+  image: Object.freeze({
+    label: '生图大模型',
+    baseUrl: presetEnv.VITE_IMAGE_BASE_URL || 'https://api.openai.com/v1',
+    model: presetEnv.VITE_IMAGE_MODEL || 'gpt-image-2',
+    size: presetEnv.VITE_IMAGE_SIZE || '1536x1024',
+  }),
+})
+
+const verifiedCaseIds = ['panlong', 'tank', 'longmuseum']
+
+function readConfig() {
+  try {
+    const stored = JSON.parse(window.sessionStorage.getItem('archflow-api-config') || '{}')
+    const llmApiKey = stored.llmApiKey || stored.apiKey || ''
+    const imageApiKey = stored.imageApiKey || stored.apiKey || ''
+    return {
+      enabled: Boolean(stored.enabled && llmApiKey && imageApiKey),
+      llmBaseUrl: builtInModels.language.baseUrl,
+      llmModel: builtInModels.language.model,
+      llmApiKey,
+      imageBaseUrl: builtInModels.image.baseUrl,
+      imageModel: builtInModels.image.model,
+      imageApiKey,
+      imageSize: builtInModels.image.size,
+    }
+  } catch {
+    return { enabled: false }
+  }
+}
+
+function fileToDataUrl(file, maxSizeMb = 10) {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith('image/')) {
+      resolve(null)
+      return
+    }
+    if (file.size > maxSizeMb * 1024 * 1024) {
+      reject(new Error(`${file.name} 超过 ${maxSizeMb}MB，请压缩后再使用。`))
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(new Error(`无法读取 ${file.name}`))
+    reader.readAsDataURL(file)
+  })
+}
+
+function extractJson(content) {
+  const cleaned = String(content || '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
+  const start = cleaned.indexOf('{')
+  const end = cleaned.lastIndexOf('}')
+  if (start < 0 || end <= start) throw new Error('语言模型没有返回可解析的结构化 JSON。')
+  try {
+    return JSON.parse(cleaned.slice(start, end + 1))
+  } catch {
+    throw new Error('语言模型返回的 JSON 格式不完整，请重新生成。')
+  }
+}
+
+function validateStructuredResult(feature, data) {
+  if (feature === 'inspiration') {
+    if (!Array.isArray(data.directions) || data.directions.length < 3 || !Array.isArray(data.sharedStrategies)) {
+      throw new Error('方案灵感结果缺少三条设计方向或共同空间策略。')
+    }
+    return {
+      coreConcept: String(data.coreConcept || '场地驱动的公共空间'),
+      directions: data.directions.slice(0, 3).map((item, index) => ({
+        code: ['A', 'B', 'C'][index],
+        title: String(item.title || `设计方向 ${index + 1}`),
+        subtitle: String(item.subtitle || 'Design Direction'),
+        strategy: String(item.strategy || ''),
+        keywords: Array.isArray(item.keywords) ? item.keywords.slice(0, 4).map(String) : [],
+      })),
+      sharedStrategies: data.sharedStrategies.slice(0, 4).map(String),
+      caseIds: Array.isArray(data.caseIds) ? data.caseIds.filter((id) => verifiedCaseIds.includes(id)).slice(0, 3) : verifiedCaseIds,
+    }
+  }
+
+  if (!Array.isArray(data.schemes) || data.schemes.length < 3) {
+    throw new Error('方案设计结果缺少 A / B / C 三套可比较方案。')
+  }
+  return {
+    schemes: data.schemes.slice(0, 3).map((item, index) => ({
+      id: ['A', 'B', 'C'][index],
+      name: String(item.name || `方案 ${index + 1}`),
+      far: String(item.far || '待测算'),
+      description: String(item.description || ''),
+      pros: String(item.pros || ''),
+      metrics: {
+        openRate: String(item.metrics?.openRate || '待测算'),
+        efficiency: String(item.metrics?.efficiency || '待测算'),
+        complexity: String(item.metrics?.complexity || '待评估'),
+        recommendation: String(item.metrics?.recommendation || '待比选'),
       },
-      body: JSON.stringify({
-        model: config.model,
-        temperature: 0.7,
-        messages: [
-          {
-            role: 'system',
-            content: `你是企业建筑设计工作台 ArchFlow 的专业设计助手。当前模块是${featureName}。请根据输入给出结构清楚、可用于设计讨论的中文结果，避免空泛表达。`,
-          },
-          {
-            role: 'user',
-            content: `${prompt}\n\n已上传文件：${files.length ? files.join('、') : '无'}\n附加选项：${JSON.stringify(options)}`,
-          },
-        ],
-      }),
-    })
+    })),
+  }
+}
 
-    if (!response.ok) {
-      const detail = await response.text()
-      throw new Error(`API ${response.status}: ${detail.slice(0, 180)}`)
+function getStructuredPrompt(feature) {
+  if (feature === 'inspiration') {
+    return `你是资深建筑设计总监。输出必须是严格 JSON，不要 Markdown，不要解释。结构如下：
+{"coreConcept":"10字以内核心概念","directions":[{"title":"中文方向名","subtitle":"英文副标题","strategy":"80字内空间策略","keywords":["关键词1","关键词2","关键词3"]},{},{ }],"sharedStrategies":["策略1","策略2","策略3"],"caseIds":["panlong","tank","longmuseum"]}
+必须给出三条逻辑明显不同且可落地的方向。案例只能从 panlong、tank、longmuseum 三个已审核案例中选择，不得编造网址。`
+  }
+  return `你是资深建筑方案设计总监。输出必须是严格 JSON，不要 Markdown，不要解释。结构如下：
+{"schemes":[{"name":"中文方案名","far":"如 FAR 2.42","description":"80字内空间与功能策略","pros":"两项核心优势，用 / 分隔","metrics":{"openRate":"百分比","efficiency":"百分比","complexity":"低/中/高","recommendation":"10字内结论"}},{},{ }]}
+必须给出 A / B / C 三套体量与组织逻辑明显不同的可比较方案，指标应彼此合理且不完全相同。`
+}
+
+async function generateStructuredText({ feature, prompt, files, config, options }) {
+  const imageFiles = files.filter((file) => file.type?.startsWith('image/')).slice(0, 2)
+  const imageUrls = (await Promise.all(imageFiles.map(fileToDataUrl))).filter(Boolean)
+  const fileNames = files.map((file) => file.name).join('、') || '无'
+  const userContent = [
+    {
+      type: 'text',
+      text: `${prompt}\n\n本次临时附件：${fileNames}\n附加选项：${JSON.stringify(options)}\n请结合附件图像中的场地、体量或空间信息作答。`,
+    },
+    ...imageUrls.map((url) => ({ type: 'image_url', image_url: { url, detail: 'auto' } })),
+  ]
+  const endpoint = `${config.llmBaseUrl.replace(/\/$/, '')}/chat/completions`
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.llmApiKey}` },
+    body: JSON.stringify({
+      model: config.llmModel,
+      messages: [
+        { role: 'system', content: getStructuredPrompt(feature) },
+        { role: 'user', content: userContent },
+      ],
+    }),
+  })
+  if (!response.ok) {
+    const detail = await response.text()
+    throw new Error(`语言模型 API ${response.status}: ${detail.slice(0, 160)}`)
+  }
+  const payload = await response.json()
+  const content = payload.choices?.[0]?.message?.content || ''
+  return { content, structured: validateStructuredResult(feature, extractJson(content)) }
+}
+
+async function generateRenderImages({ prompt, files, config }) {
+  const imageFile = files.find((file) => file.type?.startsWith('image/'))
+  if (!imageFile) throw new Error('AI 渲染需要先上传一张白模或原始效果图。')
+  const baseUrl = config.imageBaseUrl.replace(/\/$/, '')
+  const renderPrompt = `专业建筑可视化效果图。严格保留原始建筑主体、体量关系、相机视角和构图，只根据以下要求改善材质、景观、灯光与氛围：${prompt}。画面克制、真实、可用于建筑方案汇报，不添加文字或水印。`
+  let response
+
+  if (imageFile.size > 15 * 1024 * 1024) throw new Error('渲染参考图超过 15MB，请压缩后重新上传。')
+  const originalImageUrl = await fileToDataUrl(imageFile, 15)
+  const form = new FormData()
+  form.append('model', config.imageModel)
+  form.append('prompt', renderPrompt)
+  form.append('image', imageFile, imageFile.name)
+  form.append('n', '1')
+  form.append('size', config.imageSize)
+  response = await fetch(`${baseUrl}/images/edits`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${config.imageApiKey}` },
+    body: form,
+  })
+
+  if (!response.ok) {
+    const detail = await response.text()
+    throw new Error(`图生图 API ${response.status}: ${detail.slice(0, 160)}`)
+  }
+  const payload = await response.json()
+  const images = (payload.data || []).slice(0, 1).map((item, index) => ({
+    id: index + 1,
+    title: index === 0 ? '真实生成 · 主视角' : '真实生成 · 候选视角',
+    meta: `${config.imageModel} · ${config.imageSize}`,
+    imageUrl: item.b64_json ? `data:image/png;base64,${item.b64_json}` : item.url,
+  })).filter((item) => item.imageUrl)
+  if (!images.length) throw new Error('图像 API 已响应，但没有返回可显示的图片。')
+  return { images, originalImageUrl }
+}
+
+export async function generateWithApi({ feature, prompt, files = [], options = {} }) {
+  const config = readConfig()
+  const isLiveFeature = liveFeatureIds.includes(feature)
+
+  if (config.enabled && isLiveFeature) {
+    if (feature === 'render') {
+      if (!config.imageBaseUrl || !config.imageModel || !config.imageApiKey) {
+        throw new Error('请先在“方案一组”中填写生图大模型 API Key。')
+      }
+      const generated = await generateRenderImages({ prompt, files, config })
+      return {
+        id: `${feature}-${Date.now()}`,
+        feature,
+        prompt,
+        fileNames: files.map((file) => file.name),
+        createdAt: new Date().toISOString(),
+        mode: 'external-image-api',
+        model: config.imageModel,
+        images: generated.images,
+        originalImageUrl: generated.originalImageUrl,
+      }
     }
 
-    const payload = await response.json()
+    if (!config.llmBaseUrl || !config.llmModel || !config.llmApiKey) {
+      throw new Error('请先在“方案一组”中填写语言大模型 API Key。')
+    }
+    const generated = await generateStructuredText({ feature, prompt, files, config, options })
     return {
       id: `${feature}-${Date.now()}`,
       feature,
       prompt,
-      files,
+      fileNames: files.map((file) => file.name),
       options,
       createdAt: new Date().toISOString(),
-      mode: 'external-api',
-      content: payload.choices?.[0]?.message?.content || '接口已返回结果。',
+      mode: 'external-language-api',
+      model: config.llmModel,
+      content: generated.content,
+      structured: generated.structured,
     }
   }
 
+  const demoReference = feature === 'render' ? files.find((file) => file.type?.startsWith('image/')) : null
+  const demoOriginalImageUrl = demoReference ? await fileToDataUrl(demoReference, 15) : undefined
   await new Promise((resolve) => window.setTimeout(resolve, 950))
   return {
     id: `${feature}-${Date.now()}`,
     feature,
     prompt,
-    files,
+    fileNames: files.map((file) => file.name || String(file)),
     options,
     createdAt: new Date().toISOString(),
     mode: 'local-demo-adapter',
+    originalImageUrl: demoOriginalImageUrl,
   }
 }
 

@@ -3,6 +3,7 @@ import {
   ArrowRight,
   BadgeCheck,
   Bell,
+  BrainCircuit,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -17,6 +18,7 @@ import {
   Focus,
   FolderOpen,
   Info,
+  ImagePlus,
   Link2,
   LoaderCircle,
   Menu,
@@ -57,6 +59,17 @@ function downloadDemo(name, content = 'ArchFlow interview demo placeholder') {
   URL.revokeObjectURL(url)
 }
 
+function downloadGeneratedAsset(url, name) {
+  const link = document.createElement('a')
+  link.href = url
+  link.download = name
+  link.target = '_blank'
+  link.rel = 'noreferrer'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+}
+
 export default function App() {
   const [route, setRoute] = useState(getInitialRoute)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -64,7 +77,10 @@ export default function App() {
   const [dialog, setDialog] = useState(null)
   const [toast, setToast] = useState(null)
   const [apiEnabled, setApiEnabled] = useState(() => {
-    try { return Boolean(JSON.parse(window.sessionStorage.getItem('archflow-api-config') || '{}').enabled) } catch { return false }
+    try {
+      const config = JSON.parse(window.sessionStorage.getItem('archflow-api-config') || '{}')
+      return Boolean(config.enabled && config.llmApiKey && config.imageApiKey)
+    } catch { return false }
   })
 
   useEffect(() => {
@@ -120,7 +136,7 @@ export default function App() {
         apiEnabled={apiEnabled}
       />
       <main className="main-shell">
-        <Topbar route={route} onMenu={() => setMobileNavOpen(true)} onNavigate={navigate} />
+        <Topbar route={route} onMenu={() => setMobileNavOpen(true)} onNavigate={navigate} onDialog={setDialog} />
         <div className="page-shell">
           {route === 'home' && <HomeView onNavigate={navigate} />}
           {currentFeature && (
@@ -186,7 +202,7 @@ function Sidebar({ route, open, onNavigate, onClose, onStatus, apiEnabled }) {
         <div className="sidebar-bottom">
           <button className="api-card" onClick={onStatus}>
             <span className="status-pulse" />
-            <span><strong>{apiEnabled ? '用户 API 已连接' : 'API 配置入口'}</strong><small>{apiEnabled ? 'EXTERNAL API ACTIVE' : 'LOCAL DEMO ADAPTER'}</small></span>
+            <span><strong>{apiEnabled ? '模型密钥已配置' : 'API Key 配置'}</strong><small>{apiEnabled ? '2 MODEL KEYS READY' : 'LOCAL DEMO ADAPTER'}</small></span>
             <ArrowRight />
           </button>
           <button className="profile-row" type="button" onClick={onStatus}>
@@ -200,7 +216,7 @@ function Sidebar({ route, open, onNavigate, onClose, onStatus, apiEnabled }) {
   )
 }
 
-function Topbar({ route, onMenu, onNavigate }) {
+function Topbar({ route, onMenu, onNavigate, onDialog }) {
   const item = navItems.find((nav) => nav.id === route)
   return (
     <header className="topbar">
@@ -212,10 +228,10 @@ function Topbar({ route, onMenu, onNavigate }) {
       </div>
       <div className="topbar-actions">
         <button className="search-pill" type="button" onClick={() => onNavigate('assets')}>
-          <Search /><span>搜索项目或资产</span><kbd>⌘ K</kbd>
+          <Search /><span>搜索项目或资产</span>
         </button>
-        <button className="icon-button" aria-label="帮助中心"><CircleHelp /></button>
-        <button className="icon-button notification" aria-label="通知"><Bell /><span /></button>
+        <button className="icon-button" aria-label="帮助中心" onClick={() => onDialog({ type: 'help' })}><CircleHelp /></button>
+        <button className="icon-button notification" aria-label="通知" onClick={() => onDialog({ type: 'notification' })}><Bell /><span /></button>
       </div>
     </header>
   )
@@ -234,7 +250,7 @@ function HomeView({ onNavigate }) {
             <button className="button button-secondary" onClick={() => onNavigate('assets')}>打开最近项目 <FolderOpen /></button>
           </div>
         </div>
-        <WorkspaceScene onNavigate={onNavigate} />
+        <WorkspaceScene />
       </section>
 
       <section className="section-block">
@@ -267,35 +283,65 @@ function HomeView({ onNavigate }) {
   )
 }
 
-function WorkspaceScene({ onNavigate }) {
+function WorkspaceScene() {
+  const [memos, setMemos] = useState([
+    { id: 2, text: '周五前完成 A / B / C 方案比选，准备甲方沟通版。', time: '今天 10:20' },
+    { id: 1, text: '确认滨水入口雨棚净高，与结构顾问同步 4.8m 控制线。', time: '今天 09:35' },
+  ])
+  const [draft, setDraft] = useState('')
+  const [showAllMemos, setShowAllMemos] = useState(false)
+
+  const addMemo = (event) => {
+    event.preventDefault()
+    const text = draft.trim()
+    if (!text) return
+    const time = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date())
+    setMemos((current) => [{ id: Date.now(), text, time: `今天 ${time}` }, ...current])
+    setDraft('')
+  }
+
   return (
     <div className="workspace-scene" aria-label="ArchFlow 项目工作区预览">
-      <div className="scene-topline"><span><i /> PROJECT OVERVIEW</span><span>Last synced 2 min ago</span></div>
-      <div className="scene-cards">
-        <button className="scene-card card-one" onClick={() => onNavigate('inspiration')}>
-          <span className="mini-sheet"><i /><i /><i /></span>
-          <span><small>01 / DISCOVER</small><strong>方案灵感</strong></span><ArrowRight />
-        </button>
-        <button className="scene-card card-two" onClick={() => onNavigate('design')}>
-          <span className="mini-sheet diagram"><i /><i /><i /></span>
-          <span><small>02 / DEFINE</small><strong>概念方案</strong></span><ArrowRight />
-        </button>
-      </div>
-      <div className="scene-metrics">
-        <div><small>设计进度</small><strong>68<sup>%</sup></strong></div>
-        <div><small>本周生成</small><strong>16<sup>项</sup></strong></div>
-        <div><small>资产复用</small><strong>9<sup>次</sup></strong></div>
-      </div>
-      <div className="scene-chart">
-        <div className="chart-label"><span>PROJECT ACTIVITY</span><span>17 — 23 AUG</span></div>
-        <svg viewBox="0 0 720 130" preserveAspectRatio="none" role="img" aria-label="项目活跃趋势">
-          <defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#54c8e8" stopOpacity=".28"/><stop offset="1" stopColor="#54c8e8" stopOpacity="0"/></linearGradient></defs>
-          <path className="chart-area" d="M0,100 C70,92 90,36 155,61 S250,105 305,72 S410,30 474,55 S570,105 720,35 L720,130 L0,130 Z" />
-          <path className="chart-line" d="M0,100 C70,92 90,36 155,61 S250,105 305,72 S410,30 474,55 S570,105 720,35" />
-          {[0,155,305,474,720].map((cx, i) => <circle key={cx} cx={cx} cy={[100,61,72,55,35][i]} r="4" />)}
-        </svg>
-      </div>
-      <div className="scene-command"><WandSparkles /><span>描述你的设计任务…</span><button aria-label="发送"><Send /></button></div>
+      <div className="scene-topline"><span><i /> WEEKLY OVERVIEW</span><span>17 — 23 AUG</span></div>
+      {showAllMemos ? (
+        <section className="memo-detail-panel" aria-label="备忘录详情">
+          <div className="memo-detail-head">
+            <button onClick={() => setShowAllMemos(false)}><ChevronLeft /> 返回本周概况</button>
+            <span>{memos.length} 条备忘录</span>
+          </div>
+          <div className="memo-detail-list">
+            {memos.map((memo, index) => (
+              <article key={memo.id}><span>{String(memos.length - index).padStart(2, '0')}</span><p>{memo.text}</p><small><Clock3 /> {memo.time}</small></article>
+            ))}
+          </div>
+        </section>
+      ) : (
+        <>
+          <section className="scene-memo-block" aria-label="最近备忘录">
+            <div className="memo-block-head"><span>PROJECT MEMOS · {String(memos.length).padStart(2, '0')}</span>{memos.length > 2 && <button className="memo-more-tab" onClick={() => setShowAllMemos(true)}>更多 {memos.length - 2}<ArrowRight /></button>}</div>
+            <div className="memo-card-grid" aria-live="polite">
+              {memos.slice(0, 2).map((memo, index) => (
+                <article className="memo-card" key={memo.id}><span>{String(memos.length - index).padStart(2, '0')}</span><p>{memo.text}</p><small><Clock3 /> {memo.time}</small></article>
+              ))}
+            </div>
+          </section>
+          <div className="scene-metrics">
+            <div><small>设计进度</small><strong>68<sup>%</sup></strong></div>
+            <div><small>本周生成</small><strong>16<sup>项</sup></strong></div>
+            <div><small>资产复用</small><strong>9<sup>次</sup></strong></div>
+          </div>
+          <div className="scene-chart">
+            <div className="chart-label"><span>PROJECT ACTIVITY</span><span>本周概况</span></div>
+            <svg viewBox="0 0 720 130" preserveAspectRatio="none" role="img" aria-label="本周项目活跃趋势">
+              <defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#54c8e8" stopOpacity=".28"/><stop offset="1" stopColor="#54c8e8" stopOpacity="0"/></linearGradient></defs>
+              <path className="chart-area" d="M0,100 C70,92 90,36 155,61 S250,105 305,72 S410,30 474,55 S570,105 720,35 L720,130 L0,130 Z" />
+              <path className="chart-line" d="M0,100 C70,92 90,36 155,61 S250,105 305,72 S410,30 474,55 S570,105 720,35" />
+              {[0,155,305,474,720].map((cx, i) => <circle key={cx} cx={cx} cy={[100,61,72,55,35][i]} r="4" />)}
+            </svg>
+          </div>
+        </>
+      )}
+      <form className="scene-command" onSubmit={addMemo}><WandSparkles /><input value={draft} onChange={(event) => setDraft(event.target.value)} maxLength="120" aria-label="新增项目备忘录" placeholder="写下本周项目备忘录…" /><button type="submit" aria-label="保存备忘录" disabled={!draft.trim()}><Send /></button></form>
     </div>
   )
 }
@@ -312,15 +358,41 @@ function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
     setPrompt((current) => current ? `${current}，${chip}` : chip)
   }
 
+  const appendFiles = (incomingFiles) => {
+    const supportedFiles = Array.from(incomingFiles || []).filter((file) => (
+      file.type?.startsWith('image/') || /\.(pdf|dwg|dxf)$/i.test(file.name)
+    ))
+    if (!supportedFiles.length) return 0
+    setFiles((current) => [...current, ...supportedFiles].slice(0, 6))
+    return supportedFiles.length
+  }
+
+  const handlePaste = (event) => {
+    const clipboardFiles = Array.from(event.clipboardData?.files || [])
+    const itemFiles = clipboardFiles.length ? [] : Array.from(event.clipboardData?.items || [])
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .filter(Boolean)
+    const pastedImages = [...clipboardFiles, ...itemFiles].filter((file) => file.type?.startsWith('image/'))
+    if (!pastedImages.length) return
+    event.preventDefault()
+    const added = appendFiles(pastedImages)
+    onToast({ title: '已粘贴图片', detail: `${added} 张图片已加入本次临时附件，可直接用于识图或渲染。` })
+  }
+
   const handleGenerate = async () => {
     if (!prompt.trim()) {
       onToast({ title: '请先描述任务', detail: '至少填写项目类型、场地或目标成果。' })
       return
     }
+    if (feature.id === 'render' && !files.some((file) => file.type?.startsWith('image/'))) {
+      onToast({ title: '请先上传参考图', detail: 'AI 渲染需要一张白模或原始效果图，生成后才能进行滑杆对比。' })
+      return
+    }
     setLoading(true)
     setResult(null)
     try {
-      const response = await generateWithApi({ feature: feature.id, prompt, files: files.map((file) => file.name) })
+      const response = await generateWithApi({ feature: feature.id, prompt, files })
       setResult(response)
       window.setTimeout(() => outputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
     } catch (error) {
@@ -350,8 +422,9 @@ function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
       </header>
 
       <section className="composer-layout" aria-label={`${feature.nav}输入区`}>
-        <div className="composer-panel glass-panel">
+        <div className="composer-panel glass-panel" onPaste={handlePaste}>
           <div className="panel-heading"><span><Sparkles /></span><div><h2>告诉 ArchFlow 你正在做什么</h2><p>像和项目搭档沟通一样，写清目标和限制条件。</p></div></div>
+          {files.length > 0 && <FilePreviewList files={files} onRemove={(index) => setFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))} />}
           <label className="field-label" htmlFor={`prompt-${feature.id}`}>项目描述 <strong>必填</strong></label>
           <div className="prompt-box">
             <textarea
@@ -374,16 +447,20 @@ function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
               className="sr-only"
               type="file"
               multiple
-              onChange={(event) => setFiles(Array.from(event.target.files || []))}
+              accept=".pdf,.dwg,.dxf,image/png,image/jpeg,image/webp"
+              onChange={(event) => {
+                appendFiles(event.target.files)
+                event.target.value = ''
+              }}
             />
             <label htmlFor={`files-${feature.id}`}>
               <span className="upload-icon"><UploadCloud /></span>
-              <span><strong>{files.length ? `已选择 ${files.length} 个文件` : '上传项目资料'}</strong><small>{files.length ? files.map((file) => file.name).join(' · ') : 'PDF、DWG、JPG、PNG，单个不超过 50MB'}</small></span>
-              <span className="button button-quiet">选择文件</span>
+              <span><strong>{files.length ? `已加载 ${files.length} 个临时文件` : '上传项目资料'}</strong><small>{files.length ? '可继续选择，最多保留 6 个；也可在输入框内按 Ctrl + V 粘贴图片' : 'JPG / PNG 支持选择或 Ctrl + V 粘贴；PDF / DWG 当前仅记录文件名'}</small></span>
+              <span className="button button-quiet upload-button">选择文件{files.length > 0 && <em>{files.length}</em>}</span>
             </label>
           </div>
           <div className="composer-footer">
-            <span><Cloud /> 内容仅用于本次生成，不用于公开训练</span>
+            <span><Cloud /> 仅保存在当前页面内存，离开模块即释放</span>
             <button className="button button-primary generate-button" onClick={handleGenerate} disabled={loading}>
               {loading ? <><LoaderCircle className="spin" /> 正在分析</> : <>生成专业结果 <WandSparkles /></>}
             </button>
@@ -419,6 +496,31 @@ function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
   )
 }
 
+function FilePreviewList({ files, onRemove }) {
+  const [previews, setPreviews] = useState([])
+
+  useEffect(() => {
+    const next = files.map((file) => ({
+      name: file.name,
+      imageUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : null,
+    }))
+    setPreviews(next)
+    return () => next.forEach((item) => item.imageUrl && URL.revokeObjectURL(item.imageUrl))
+  }, [files])
+
+  return (
+    <div className="file-preview-strip" aria-label="本次临时附件">
+      {previews.map((item, index) => (
+        <div className="file-preview-item" key={`${item.name}-${index}`}>
+          {item.imageUrl ? <img src={item.imageUrl} alt="" /> : <span><FileArchive /></span>}
+          <p><strong>{item.name}</strong><small>仅本次会话</small></p>
+          <button type="button" onClick={() => onRemove(index)} aria-label={`移除${item.name}`}><X /></button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function OutputSkeleton({ feature }) {
   return (
     <div className="output-panel glass-panel loading-panel" aria-live="polite">
@@ -429,6 +531,8 @@ function OutputSkeleton({ feature }) {
 }
 
 function OutputPanel({ feature, result, selectedScheme, setSelectedScheme, onSave, onDialog, onToast }) {
+  const isLiveResult = result.mode.startsWith('external-')
+  const liveLabel = result.mode === 'external-image-api' ? 'REAL IMAGE API' : 'REAL LANGUAGE API'
   return (
     <div className="output-panel glass-panel">
       <div className="output-head">
@@ -436,22 +540,22 @@ function OutputPanel({ feature, result, selectedScheme, setSelectedScheme, onSav
         <span className="confidence"><strong>92%</strong><small>信息完整度</small></span>
       </div>
 
-      {result.mode === 'external-api' && (
+      {isLiveResult && (
         <div className="api-result-note">
-          <span><Link2 /> USER API RESPONSE</span>
-          <p>{result.content}</p>
+          <span>{result.mode === 'external-image-api' ? <ImagePlus /> : <BrainCircuit />} {liveLabel}</span>
+          <p>由 ArchFlow 预设的 <strong>{result.model}</strong> 实时生成；本次输入与结果未写入 ArchFlow 数据库。</p>
         </div>
       )}
 
-      {feature.id === 'inspiration' && <InspirationOutput />}
-      {feature.id === 'design' && <DesignOutput selected={selectedScheme} onSelect={setSelectedScheme} />}
+      {feature.id === 'inspiration' && <InspirationOutput data={result.structured} />}
+      {feature.id === 'design' && <DesignOutput data={result.structured} selected={selectedScheme} onSelect={setSelectedScheme} />}
       {feature.id === 'beautify' && <BeautifyOutput />}
       {feature.id === 'model' && <ModelOutput onToast={onToast} />}
-      {feature.id === 'render' && <RenderOutput onDialog={onDialog} />}
+      {feature.id === 'render' && <RenderOutput images={result.images} originalImageUrl={result.originalImageUrl} onDialog={onDialog} />}
       {feature.id === 'report' && <ReportOutput onToast={onToast} />}
 
       <div className="output-actions">
-        <p><Clock3 /> 生成于刚刚 · {result.mode === 'external-api' ? '用户 API 已响应' : '本地演示数据'}</p>
+        <p><Clock3 /> 生成于刚刚 · {isLiveResult ? '用户 API 真实结果' : '本地演示数据'}</p>
         <div>
           <button className="button button-secondary" onClick={() => onToast({ title: '已创建调整版本', detail: '保留当前结果，并建立 V2 迭代分支。' })}>继续调整 <SlidersHorizontal /></button>
           <button className="button button-primary" onClick={onSave}>保存到资产 <FileArchive /></button>
@@ -461,17 +565,21 @@ function OutputPanel({ feature, result, selectedScheme, setSelectedScheme, onSav
   )
 }
 
-function InspirationOutput() {
-  const directions = [
+function InspirationOutput({ data }) {
+  const fallbackDirections = [
     { code: 'A', title: '水巷织补', subtitle: 'Water Alley Weaving', strategy: '延续江南巷道尺度，以三条可漫游的“水巷”切分体量，让公共活动自然渗入建筑内部。', keywords: ['在地肌理', '慢行渗透', '灰空间'], tone: 'aqua' },
     { code: 'B', title: '工业浮岛', subtitle: 'Industrial Archipelago', strategy: '保留原有结构网格，将展览、教育与商业拆分为漂浮盒体，用连桥建立可变化的公共环路。', keywords: ['遗存转译', '盒体叠置', '弹性运营'], tone: 'blue' },
     { code: 'C', title: '潮汐剧场', subtitle: 'Tidal Commons', strategy: '以高差回应滨水防洪，在临水界面形成阶梯式公共剧场，让建筑日常与节庆状态自由切换。', keywords: ['滨水台阶', '事件空间', '昼夜切换'], tone: 'mist' },
   ]
-  const cases = [
-    { title: '上海蟠龙天地 / BWSS', location: '上海 · 2026', href: 'https://www.archdaily.com/1039351/shanghai-panlong-tiandi-bwss', tag: '水乡更新' },
-    { title: '上海油罐艺术中心 / OPEN', location: '上海西岸 · 2019', href: 'https://www.archdaily.com/935196/tank-shanghai-open-architecture', tag: '工业遗存' },
-    { title: '龙美术馆西岸馆 / 大舍', location: '上海西岸 · 2014', href: 'https://www.archdaily.com/554661/long-museum-west-bund-atelier-deshaus', tag: '结构原型' },
-  ]
+  const directions = (data?.directions || fallbackDirections).map((item, index) => ({ ...item, code: ['A', 'B', 'C'][index], tone: ['aqua', 'blue', 'mist'][index] }))
+  const verifiedCases = {
+    panlong: { title: '上海蟠龙天地 / BWSS', location: '上海 · 2026', href: 'https://www.archdaily.com/1039351/shanghai-panlong-tiandi-bwss', tag: '水乡更新' },
+    tank: { title: '上海油罐艺术中心 / OPEN', location: '上海西岸 · 2019', href: 'https://www.archdaily.com/935196/tank-shanghai-open-architecture', tag: '工业遗存' },
+    longmuseum: { title: '龙美术馆西岸馆 / 大舍', location: '上海西岸 · 2014', href: 'https://www.archdaily.com/554661/long-museum-west-bund-atelier-deshaus', tag: '结构原型' },
+  }
+  const selectedCaseIds = data?.caseIds?.length ? data.caseIds : Object.keys(verifiedCases)
+  const cases = selectedCaseIds.map((id) => verifiedCases[id]).filter(Boolean)
+  const sharedStrategies = data?.sharedStrategies || ['将首层 42% 面积开放给城市，建立全天候公共通廊。', '保留两跨工业结构作为时间证据，新增体量与旧结构脱开。', '用连续檐下空间连接广场、水岸与展厅，改善雨热环境体验。']
   return (
     <div className="result-stack">
       <div className="result-section-head"><div><span>01</span><h3>设计方向</h3></div><p>三条路径拥有不同空间逻辑，可作为方案前期讨论起点。</p></div>
@@ -484,8 +592,8 @@ function InspirationOutput() {
         ))}
       </div>
       <div className="strategy-board">
-        <div className="strategy-map"><span className="map-core">滨水文化<br />公共客厅</span><span className="map-node node-a">保留结构</span><span className="map-node node-b">串联水巷</span><span className="map-node node-c">激活首层</span><i /><i /><i /></div>
-        <div className="strategy-copy"><span className="eyebrow">SPACE STRATEGY</span><h3>共同空间策略</h3><ul><li>将首层 42% 面积开放给城市，建立全天候公共通廊。</li><li>保留两跨工业结构作为时间证据，新增体量与旧结构脱开。</li><li>用连续檐下空间连接广场、水岸与展厅，改善雨热环境体验。</li></ul></div>
+        <div className="strategy-map"><span className="map-core">{data?.coreConcept || '滨水文化公共客厅'}</span><span className="map-node node-a">{sharedStrategies[0]?.slice(0, 6)}</span><span className="map-node node-b">{sharedStrategies[1]?.slice(0, 6)}</span><span className="map-node node-c">{sharedStrategies[2]?.slice(0, 6)}</span><i /><i /><i /></div>
+        <div className="strategy-copy"><span className="eyebrow">SPACE STRATEGY</span><h3>共同空间策略</h3><ul>{sharedStrategies.map((strategy) => <li key={strategy}>{strategy}</li>)}</ul></div>
       </div>
       <div className="result-section-head"><div><span>02</span><h3>相关案例</h3></div><p>点击卡片直接进入原案例，面试演示时可说明检索依据。</p></div>
       <div className="case-grid">
@@ -500,12 +608,13 @@ function InspirationOutput() {
   )
 }
 
-function DesignOutput({ selected, onSelect }) {
-  const schemes = [
-    { id: 'A', name: '环院聚合', stat: 'FAR 2.42', desc: '围绕共享中庭组织研发、办公与展示，内部协作效率最高。', pros: '动线清晰 / 分期友好' },
-    { id: 'B', name: '双塔连桥', stat: 'FAR 2.48', desc: '以空中连桥串联两座塔楼，形成鲜明的企业识别度与立体公共层。', pros: '地标性强 / 景观面大' },
-    { id: 'C', name: '城市梯田', stat: 'FAR 2.36', desc: '体量逐层退台形成可达屋顶，强化低碳形象和开放式办公体验。', pros: '绿色屋面 / 采光优' },
+function DesignOutput({ data, selected, onSelect }) {
+  const fallbackSchemes = [
+    { id: 'A', name: '环院聚合', far: 'FAR 2.42', description: '围绕共享中庭组织研发、办公与展示，内部协作效率最高。', pros: '动线清晰 / 分期友好', metrics: { openRate: '46%', efficiency: '81%', complexity: '中', recommendation: '综合最优' } },
+    { id: 'B', name: '双塔连桥', far: 'FAR 2.48', description: '以空中连桥串联两座塔楼，形成鲜明的企业识别度与立体公共层。', pros: '地标性强 / 景观面大', metrics: { openRate: '38%', efficiency: '84%', complexity: '高', recommendation: '形象优先' } },
+    { id: 'C', name: '城市梯田', far: 'FAR 2.36', description: '体量逐层退台形成可达屋顶，强化低碳形象和开放式办公体验。', pros: '绿色屋面 / 采光优', metrics: { openRate: '52%', efficiency: '77%', complexity: '中高', recommendation: '低碳优先' } },
   ]
+  const schemes = data?.schemes || fallbackSchemes
   return (
     <div className="result-stack">
       <div className="result-section-head"><div><span>01</span><h3>概念方案比选</h3></div><p>请选择一套主方案后保存，选择不会覆盖其他候选。</p></div>
@@ -514,17 +623,17 @@ function DesignOutput({ selected, onSelect }) {
           <button className={`scheme-card ${selected === scheme.id ? 'is-selected' : ''}`} onClick={() => onSelect(scheme.id)} key={scheme.id}>
             <span className={`massing massing-${index + 1}`}><i /><i /><i /><i /></span>
             <span className="scheme-heading"><em>OPTION {scheme.id}</em>{selected === scheme.id && <span><Check /> 已选择</span>}</span>
-            <strong>{scheme.name}</strong><p>{scheme.desc}</p>
-            <span className="scheme-stats"><small>{scheme.stat}</small><small>{scheme.pros}</small></span>
+            <strong>{scheme.name}</strong><p>{scheme.description}</p>
+            <span className="scheme-stats"><small>{scheme.far}</small><small>{scheme.pros}</small></span>
           </button>
         ))}
       </div>
       <div className="comparison-table" role="table" aria-label="三套方案专业指标对比">
         <div className="comparison-row is-head" role="row"><span>专业指标</span><strong>方案 A</strong><strong>方案 B</strong><strong>方案 C</strong></div>
-        <div className="comparison-row" role="row"><span>首层开放率</span><strong>46%</strong><strong>38%</strong><strong>52%</strong></div>
-        <div className="comparison-row" role="row"><span>标准层效率</span><strong>81%</strong><strong>84%</strong><strong>77%</strong></div>
-        <div className="comparison-row" role="row"><span>建造复杂度</span><strong>中</strong><strong>高</strong><strong>中高</strong></div>
-        <div className="comparison-row" role="row"><span>推荐结论</span><strong>综合最优</strong><strong>形象优先</strong><strong>低碳优先</strong></div>
+        <div className="comparison-row" role="row"><span>首层开放率</span>{schemes.map((scheme) => <strong key={`${scheme.id}-open`}>{scheme.metrics.openRate}</strong>)}</div>
+        <div className="comparison-row" role="row"><span>标准层效率</span>{schemes.map((scheme) => <strong key={`${scheme.id}-efficiency`}>{scheme.metrics.efficiency}</strong>)}</div>
+        <div className="comparison-row" role="row"><span>建造复杂度</span>{schemes.map((scheme) => <strong key={`${scheme.id}-complexity`}>{scheme.metrics.complexity}</strong>)}</div>
+        <div className="comparison-row" role="row"><span>推荐结论</span>{schemes.map((scheme) => <strong key={`${scheme.id}-recommendation`}>{scheme.metrics.recommendation}</strong>)}</div>
       </div>
     </div>
   )
@@ -570,22 +679,31 @@ function ModelOutput({ onToast }) {
   )
 }
 
-function RenderOutput({ onDialog }) {
-  const renders = [
-    { id: 1, title: '蓝调时刻 · 滨水入口', meta: '16:9 · 4096 × 2304', className: 'render-one' },
-    { id: 2, title: '雨后清晨 · 公共内院', meta: '4:3 · 4096 × 3072', className: 'render-two' },
-  ]
+function RenderOutput({ images, originalImageUrl, onDialog }) {
+  const [position, setPosition] = useState(52)
+  const render = images?.[0] || { id: 1, title: '蓝调时刻 · 滨水入口', meta: '16:9 · 单张对比预览', className: 'render-one' }
+  const mockBuilding = <><span className="render-building"><i/><i/><i/></span><span className="render-water"/><span className="render-people"><i/><i/><i/></span></>
   return (
     <div className="result-stack">
       <div className="result-section-head"><div><span>01</span><h3>AI 渲染效果图</h3></div><p>保留原主体、体块、视角与构图，仅强化材质、景观和氛围。</p></div>
-      <div className="render-grid">
-        {renders.map((render) => (
-          <article className="render-card" key={render.id}>
-            <button className={`render-art ${render.className}`} onClick={() => onDialog({ type: 'render', item: render })} aria-label={`大图查看${render.title}`}><span className="render-building"><i/><i/><i/></span><span className="render-water"/><span className="render-people"><i/><i/><i/></span><span className="view-label"><Eye /> 点击查看大图</span></button>
-            <div><span><strong>{render.title}</strong><small>{render.meta}</small></span><button className="icon-button" onClick={() => downloadDemo(`ArchFlow-render-${render.id}.jpg`)} aria-label={`下载${render.title}`}><Download /></button></div>
-          </article>
-        ))}
-      </div>
+      <article className="render-compare-card">
+        <div className="render-compare" style={{ '--compare-position': `${position}%` }}>
+          <div className={`render-compare-layer is-generated ${render.className || ''} ${render.imageUrl ? 'has-real-image' : ''}`}>
+            {render.imageUrl ? <img src={render.imageUrl} alt="AI 渲染生成后" /> : mockBuilding}
+            <span className="compare-label is-after">生成后</span>
+          </div>
+          <div className={`render-compare-layer is-original ${originalImageUrl ? 'has-real-image' : ''}`}>
+            {originalImageUrl ? <img src={originalImageUrl} alt="上传的原始参考图" /> : mockBuilding}
+            <span className="compare-label is-before">原图</span>
+          </div>
+          <span className="compare-line" aria-hidden="true"><i><MousePointer2 /></i></span>
+          <input aria-label="拖动查看原图和生成后效果" type="range" min="0" max="100" value={position} onInput={(event) => setPosition(Number(event.currentTarget.value))} onChange={(event) => setPosition(Number(event.currentTarget.value))} />
+        </div>
+        <div className="render-compare-meta">
+          <span><strong>{render.title}</strong><small>{render.meta} · 拖动滑杆对比</small></span>
+          <div><button className="button button-secondary" onClick={() => onDialog({ type: 'render', item: render })}><Eye /> 查看生成大图</button><button className="icon-button" onClick={() => render.imageUrl ? downloadGeneratedAsset(render.imageUrl, `ArchFlow-render-${render.id}.png`) : downloadDemo(`ArchFlow-render-${render.id}.jpg`)} aria-label={`下载${render.title}`}><Download /></button></div>
+        </div>
+      </article>
     </div>
   )
 }
@@ -665,6 +783,22 @@ function Dialog({ data, onClose, onDelete, onToast, onApiChanged }) {
     return <ProfileApiDialog closeRef={closeRef} onClose={onClose} onToast={onToast} onApiChanged={onApiChanged} />
   }
 
+  if (data.type === 'help' || data.type === 'notification') {
+    const isHelp = data.type === 'help'
+    return (
+      <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+        <section className="dialog-card confirm-dialog utility-dialog" role="dialog" aria-modal="true" aria-labelledby="utility-title">
+          <button ref={closeRef} className="icon-button dialog-close" onClick={onClose} aria-label="关闭"><X /></button>
+          <span className="dialog-symbol is-info">{isHelp ? <CircleHelp /> : <Bell />}</span>
+          <span className="eyebrow">{isHelp ? 'HELP CENTER' : 'NOTIFICATIONS'}</span>
+          <h2 id="utility-title">{isHelp ? '帮助中心' : '通知'}</h2>
+          <p>{isHelp ? '有任何疑问请发送至邮箱：本次仅演示' : '本次仅演示'}</p>
+          <div className="dialog-actions"><button className="button button-primary" onClick={onClose}>我知道了 <Check /></button></div>
+        </section>
+      </div>
+    )
+  }
+
   if (data.type === 'delete') {
     return (
       <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
@@ -682,8 +816,8 @@ function Dialog({ data, onClose, onDelete, onToast, onApiChanged }) {
       <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
         <section className="dialog-card render-dialog" role="dialog" aria-modal="true" aria-label={data.item.title}>
           <button ref={closeRef} className="icon-button dialog-close" onClick={onClose} aria-label="关闭"><X /></button>
-          <div className={`dialog-render-art ${data.item.className}`}><span className="render-building"><i/><i/><i/></span><span className="render-water"/><span className="render-people"><i/><i/><i/></span></div>
-          <div className="dialog-render-copy"><div><span className="eyebrow">AI RENDER PREVIEW</span><h2>{data.item.title}</h2><p>{data.item.meta} · 主体与构图已锁定</p></div><button className="button button-primary" onClick={() => downloadDemo(`ArchFlow-render-${data.item.id}.jpg`)}>下载原图 <Download /></button></div>
+          <div className={`dialog-render-art ${data.item.className || ''} ${data.item.imageUrl ? 'has-real-image' : ''}`}>{data.item.imageUrl ? <img src={data.item.imageUrl} alt={data.item.title} /> : <><span className="render-building"><i/><i/><i/></span><span className="render-water"/><span className="render-people"><i/><i/><i/></span></>}</div>
+          <div className="dialog-render-copy"><div><span className="eyebrow">AI RENDER PREVIEW</span><h2>{data.item.title}</h2><p>{data.item.meta} · 主体与构图已锁定</p></div><button className="button button-primary" onClick={() => data.item.imageUrl ? downloadGeneratedAsset(data.item.imageUrl, `ArchFlow-render-${data.item.id}.png`) : downloadDemo(`ArchFlow-render-${data.item.id}.jpg`)}>下载原图 <Download /></button></div>
         </section>
       </div>
     )
@@ -703,29 +837,31 @@ function Dialog({ data, onClose, onDelete, onToast, onApiChanged }) {
 
 function ProfileApiDialog({ closeRef, onClose, onToast, onApiChanged }) {
   const stored = window.sessionStorage.getItem('archflow-api-config')
-  const initial = stored ? JSON.parse(stored) : {}
-  const [enabled, setEnabled] = useState(Boolean(initial.enabled))
-  const [baseUrl, setBaseUrl] = useState(initial.baseUrl || 'https://api.openai.com/v1')
-  const [model, setModel] = useState(initial.model || '')
-  const [apiKey, setApiKey] = useState(initial.apiKey || '')
+  let initial = {}
+  try { initial = stored ? JSON.parse(stored) : {} } catch { initial = {} }
+  const [llmApiKey, setLlmApiKey] = useState(initial.llmApiKey || initial.apiKey || '')
+  const [imageApiKey, setImageApiKey] = useState(initial.imageApiKey || initial.apiKey || '')
 
   const save = (event) => {
     event.preventDefault()
-    if (enabled && (!baseUrl.trim() || !model.trim() || !apiKey.trim())) {
-      onToast({ title: 'API 配置未完成', detail: '启用真实生成前，请填写接口地址、模型名和 API Key。' })
+    const hasLanguageKey = Boolean(llmApiKey.trim())
+    const hasImageKey = Boolean(imageApiKey.trim())
+    if (hasLanguageKey !== hasImageKey) {
+      onToast({ title: '还缺少一个 API Key', detail: '语言大模型与生图大模型需要同时填写；如果同属一个 OpenAI 项目，可以填写相同 Key。' })
       return
     }
+    const enabled = hasLanguageKey && hasImageKey
     window.sessionStorage.setItem('archflow-api-config', JSON.stringify({
       enabled,
-      baseUrl: baseUrl.trim(),
-      model: model.trim(),
-      apiKey: apiKey.trim(),
+      version: 3,
+      llmApiKey: llmApiKey.trim(),
+      imageApiKey: imageApiKey.trim(),
     }))
     onApiChanged(enabled)
     onClose()
     onToast({
-      title: enabled ? '用户 API 已启用' : '已切回本地演示',
-      detail: enabled ? '下一次生成将直接请求你配置的兼容接口。' : '生成结果将继续使用本地演示数据。',
+      title: enabled ? '两类内置模型已启用' : '已切回本地演示',
+      detail: enabled ? '方案灵感、方案设计和 AI 渲染将使用真实接口。' : '密钥已清空，所有模块将继续使用本地演示数据。',
     })
   }
 
@@ -739,15 +875,27 @@ function ProfileApiDialog({ closeRef, onClose, onToast, onApiChanged }) {
         </div>
         <div className="privacy-note"><BadgeCheck /><p><strong>用户信息已脱敏</strong><small>本站不展示真实姓名、邮箱或企业名称；当前身份统一以“方案一组”作为演示账号。</small></p></div>
         <form className="api-form" onSubmit={save}>
-          <div className="api-form-head"><div><span className="eyebrow">BRING YOUR OWN API</span><h3>连接真实生成接口</h3></div><label className="switch"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span /><em>{enabled ? '已启用' : '未启用'}</em></label></div>
-          <p className="api-description">支持 OpenAI-compatible <code>/chat/completions</code> 接口。密钥仅保存在当前浏览器会话，关闭标签页后自动清除。</p>
-          <div className="api-fields">
-            <label><span>API Base URL</span><input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" disabled={!enabled} /></label>
-            <label><span>Model</span><input value={model} onChange={(event) => setModel(event.target.value)} placeholder="请输入模型名称" disabled={!enabled} /></label>
-            <label className="full-field"><span>API Key</span><input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="sk-••••••••••••" autoComplete="off" disabled={!enabled} /></label>
-          </div>
-          <div className="security-hint"><Info /><span>浏览器直连要求接口允许 CORS。正式生产环境应由服务端代理请求，避免在前端长期保存密钥。</span></div>
-          <div className="dialog-actions"><button className="button button-secondary" type="button" onClick={onClose}>取消</button><button className="button button-primary" type="submit">保存连接 <Link2 /></button></div>
+          <div className="api-form-head"><div><span className="eyebrow">BUILT-IN MODEL ACCESS</span><h3>连接两类真实生成能力</h3></div><span className="model-preset-badge"><BadgeCheck /> 模型已预设</span></div>
+          <p className="api-description">接口地址、模型名称和输出规格已由 ArchFlow 预设。你只需要填写两把 API Key；密钥仅保存在当前浏览器会话，关闭标签页后自动清除。</p>
+          <div className="live-module-row"><span><BrainCircuit /> 方案灵感</span><span><BrainCircuit /> 方案设计</span><span><ImagePlus /> AI 渲染</span></div>
+
+          <section className="api-group" aria-labelledby="llm-api-title">
+            <div className="api-group-title"><span><BrainCircuit /></span><div><h4 id="llm-api-title">语言大模型</h4><p>平台已内置结构化方案生成链路，用于方案灵感与方案设计。</p></div><em className="preset-state">PRESET</em></div>
+            <div className="api-fields">
+              <label className="full-field"><span>语言大模型 API Key</span><input type="password" value={llmApiKey} onChange={(event) => setLlmApiKey(event.target.value)} placeholder="请输入语言大模型 API Key" autoComplete="off" /></label>
+            </div>
+          </section>
+
+          <section className="api-group" aria-labelledby="image-api-title">
+            <div className="api-group-title"><span><ImagePlus /></span><div><h4 id="image-api-title">生图大模型</h4><p>平台已内置参考图编辑链路，用于生成单张渲染图并进行前后对比。</p></div><em className="preset-state">PRESET</em></div>
+            <div className="api-fields">
+              <label className="full-field"><span>生图大模型 API Key</span><input type="password" value={imageApiKey} onChange={(event) => setImageApiKey(event.target.value)} placeholder="请输入生图大模型 API Key" autoComplete="off" /></label>
+            </div>
+          </section>
+
+          <div className="session-storage-note"><Cloud /><p><strong>会话级隐私策略</strong><small>API Key 和上传文件不会写入 ArchFlow 数据库；关闭标签页后密钥清除，离开模块后附件释放。</small></p></div>
+          <div className="security-hint"><Info /><span>当前公开演示采用访问者自己的 Key。不要把项目所有者的密钥写入源码或 Git；若要让访问者免填 Key，必须增加服务端代理。</span></div>
+          <div className="dialog-actions"><button className="button button-secondary" type="button" onClick={() => { setLlmApiKey(''); setImageApiKey('') }}>清空密钥</button><button className="button button-primary" type="submit">保存并连接 <Link2 /></button></div>
         </form>
       </section>
     </div>
