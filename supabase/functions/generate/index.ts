@@ -42,7 +42,7 @@ function languageConfig() {
   return {
     baseUrl: env('ARCHFLOW_LLM_BASE_URL') || 'https://ws-g9wsij6srpylaed0.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
     model: env('ARCHFLOW_LLM_MODEL') || 'qwen3.7-plus',
-    apiKey: env('ARCHFLOW_LLM_API_KEY'),
+    apiKey: env('ARCHFLOW_LLM_API_KEY') || env('百炼keygit2内部1'),
   }
 }
 
@@ -53,7 +53,7 @@ function imageConfig(slot: 'image1' | 'image2'): ImageConfig {
     label: env(`${prefix}_LABEL`) || (slot === 'image1' ? '第三方生图服务' : '内置生图 API 2'),
     baseUrl: env(`${prefix}_BASE_URL`) || (slot === 'image1' ? 'https://img.yunfei.best' : ''),
     model: env(`${prefix}_MODEL`) || (slot === 'image1' ? 'gpt-image-2' : ''),
-    apiKey: env(`${prefix}_API_KEY`),
+    apiKey: env(`${prefix}_API_KEY`) || (slot === 'image1' ? env('生图api 4k') : ''),
     protocol: env(`${prefix}_PROTOCOL`) || 'auto',
     size: env(`${prefix}_SIZE`) || '1536x1024',
   }
