@@ -889,15 +889,16 @@ function ProfileApiDialog({ closeRef, onClose, onToast, onApiChanged }) {
   let initial = {}
   try { initial = stored ? JSON.parse(stored) : {} } catch { initial = {} }
   const isCurrentConfig = initial.version >= 4
+  const isLegacyBailianModel = (initial.llmProvider || 'bailian') === 'bailian' && /^\d+$/.test(String(initial.llmModel || ''))
   const [llmProvider, setLlmProvider] = useState(isCurrentConfig ? initial.llmProvider || 'bailian' : 'bailian')
   const [llmBaseUrl, setLlmBaseUrl] = useState(isCurrentConfig ? initial.llmBaseUrl || modelProviders.language.bailian.baseUrl : modelProviders.language.bailian.baseUrl)
-  const [llmModel, setLlmModel] = useState(isCurrentConfig ? initial.llmModel || modelProviders.language.bailian.model : modelProviders.language.bailian.model)
+  const [llmModel, setLlmModel] = useState(isCurrentConfig && !isLegacyBailianModel ? initial.llmModel || modelProviders.language.bailian.model : modelProviders.language.bailian.model)
   const [llmApiKey, setLlmApiKey] = useState(initial.llmApiKey || initial.apiKey || '')
   const [imageProvider, setImageProvider] = useState(isCurrentConfig ? initial.imageProvider || 'yunfei' : 'yunfei')
   const [imageBaseUrl, setImageBaseUrl] = useState(isCurrentConfig ? initial.imageBaseUrl || modelProviders.image.yunfei.baseUrl : modelProviders.image.yunfei.baseUrl)
   const [imageModel, setImageModel] = useState(isCurrentConfig ? initial.imageModel || modelProviders.image.yunfei.model : modelProviders.image.yunfei.model)
   const [imageApiKey, setImageApiKey] = useState(initial.imageApiKey || initial.apiKey || '')
-  const [llmCheck, setLlmCheck] = useState(isCurrentConfig && initial.llmVerified
+  const [llmCheck, setLlmCheck] = useState(isCurrentConfig && initial.llmVerified && !isLegacyBailianModel
     ? { status: 'success', message: `已连接 · ${initial.llmModel || modelProviders.language.bailian.model}` }
     : { status: 'idle', message: '填写后点击“应用 Key”进行检查' })
   const [imageCheck, setImageCheck] = useState(isCurrentConfig && initial.imageVerified
@@ -962,7 +963,7 @@ function ProfileApiDialog({ closeRef, onClose, onToast, onApiChanged }) {
     const enabled = hasLanguageKey && hasImageKey
     window.sessionStorage.setItem('archflow-api-config', JSON.stringify({
       enabled,
-      version: 4,
+      version: 5,
       llmProvider,
       llmBaseUrl: resolveModelConnection('language', { provider: llmProvider, baseUrl: llmBaseUrl, model: llmModel }).baseUrl,
       llmModel,
@@ -1003,7 +1004,7 @@ function ProfileApiDialog({ closeRef, onClose, onToast, onApiChanged }) {
               {llmProviderConfig.customBase
                 ? <label><span>Base URL</span><input value={llmBaseUrl} onChange={(event) => { setLlmBaseUrl(event.target.value); resetCheck('language') }} placeholder="https://provider.example/v1" /></label>
                 : <div className="preset-connection"><span>内置地址</span><strong>{llmProviderConfig.baseUrl}</strong></div>}
-              {llmProviderConfig.customModel && <label className="full-field"><span>模型 ID</span><input value={llmModel} onChange={(event) => { setLlmModel(event.target.value); resetCheck('language') }} placeholder="例如百炼模型 ID" /></label>}
+              {llmProviderConfig.customModel && <label className="full-field"><span>模型名称</span><input value={llmModel} onChange={(event) => { setLlmModel(event.target.value); resetCheck('language') }} placeholder="例如 qwen-plus（不是数字资源 ID）" /></label>}
               <div className="api-key-field full-field">
                 <label htmlFor="llm-api-key">语言大模型 API Key</label>
                 <div className="api-key-control"><input id="llm-api-key" type="password" value={llmApiKey} onChange={(event) => { setLlmApiKey(event.target.value); resetCheck('language') }} placeholder="请输入语言大模型 API Key" autoComplete="off" /><button type="button" onClick={() => applyKey('language')} disabled={llmCheck.status === 'checking'}>{llmCheck.status === 'checking' ? <LoaderCircle className="spin" /> : <Link2 />} 应用 Key</button></div>

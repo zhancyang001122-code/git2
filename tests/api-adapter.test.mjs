@@ -23,7 +23,7 @@ globalThis.FileReader = class FileReader {
 const baseConfig = {
   enabled: true,
   llmProvider: 'bailian',
-  llmModel: '6736696',
+  llmModel: 'qwen-plus',
   llmApiKey: 'test-language-key',
   imageProvider: 'yunfei',
   imageModel: 'gpt-image-2',
@@ -55,7 +55,7 @@ test('方案灵感使用语言模型结构化结果', async () => {
   const result = await generateWithApi({ feature: 'inspiration', prompt: '滨水文化中心', files: [] })
   assert.equal(request.url, 'https://ws-g9wsij6srpylaed0.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions')
   const payload = JSON.parse(request.options.body)
-  assert.equal(payload.model, '6736696')
+  assert.equal(payload.model, 'qwen-plus')
   assert.equal('temperature' in payload, false)
   assert.equal(result.mode, 'external-language-api')
   assert.equal(result.structured.directions.length, 3)
@@ -175,7 +175,7 @@ test('应用 Key 使用模型列表验证鉴权与模型可见性', async () => 
   assert.match(result.message, /已连接/)
 })
 
-test('百炼应用 Key 用最小对话同时验证 Key 与模型 ID', async () => {
+test('百炼应用 Key 用最小对话同时验证 Key 与模型名称', async () => {
   let request
   globalThis.fetch = async (url, options) => {
     request = { url, options }
@@ -184,12 +184,25 @@ test('百炼应用 Key 用最小对话同时验证 Key 与模型 ID', async () =
 
   const result = await checkModelConnection('language', {
     provider: 'bailian',
-    model: '6736696',
+    model: 'qwen-plus',
     apiKey: 'test-language-key',
   })
   assert.equal(request.url, 'https://ws-g9wsij6srpylaed0.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions')
-  assert.equal(JSON.parse(request.options.body).model, '6736696')
-  assert.equal(result.model, '6736696')
+  assert.equal(JSON.parse(request.options.body).model, 'qwen-plus')
+  assert.equal(result.model, 'qwen-plus')
+})
+
+test('百炼数字资源 ID 会在请求前给出可操作提示', async () => {
+  globalThis.fetch = async () => assert.fail('数字资源 ID 不应发起请求')
+
+  await assert.rejects(
+    checkModelConnection('language', {
+      provider: 'bailian',
+      model: '6736696',
+      apiKey: 'test-language-key',
+    }),
+    /需要模型名称.*不是.*数字 ID/,
+  )
 })
 
 test('第三方 NewAPI 的 Gemini 生图模型自动改走原生 Gemini 端点', async () => {

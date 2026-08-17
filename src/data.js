@@ -188,7 +188,7 @@ export const modelProviders = Object.freeze({
       label: '阿里云百炼',
       protocol: 'openai-chat',
       baseUrl: 'https://ws-g9wsij6srpylaed0.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
-      model: '6736696',
+      model: 'qwen-plus',
       customBase: false,
       customModel: true,
     }),
@@ -285,7 +285,12 @@ export async function checkModelConnection(kind, values, { timeoutMs = 12000 } =
   const apiKey = String(values.apiKey || '').trim()
   const connection = resolveModelConnection(kind, values)
   if (!apiKey) throw new Error(`请先填写${kind === 'language' ? '语言大模型' : '生图大模型'} API Key。`)
-  if (!connection.baseUrl || !connection.model) throw new Error('第三方服务需要填写 Base URL 和模型 ID。')
+  if (!connection.baseUrl || !connection.model) {
+    throw new Error(`第三方服务需要填写 Base URL 和${kind === 'language' ? '模型名称' : '模型 ID'}。`)
+  }
+  if (kind === 'language' && connection.provider === 'bailian' && /^\d+$/.test(connection.model)) {
+    throw new Error('百炼此处需要模型名称（如 qwen-plus），不是控制台中的数字 ID。')
+  }
 
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
@@ -314,6 +319,9 @@ export async function checkModelConnection(kind, values, { timeoutMs = 12000 } =
       : { method: 'GET', headers, signal: controller.signal })
     if (!response.ok) {
       const detail = (await response.text()).slice(0, 180)
+      if (response.status === 404 && kind === 'language' && connection.provider === 'bailian') {
+        throw new Error(`百炼未找到模型“${connection.model}”。请填写模型名称（如 qwen-plus），不要填写数字资源 ID。`)
+      }
       throw new Error(connectionErrorMessage(response.status, detail))
     }
     const payload = await response.json()
@@ -347,10 +355,11 @@ function readConfig() {
     const stored = JSON.parse(window.sessionStorage.getItem('archflow-api-config') || '{}')
     const llmApiKey = stored.llmApiKey || stored.apiKey || ''
     const imageApiKey = stored.imageApiKey || stored.apiKey || ''
+    const isLegacyBailianModel = (stored.llmProvider || 'bailian') === 'bailian' && /^\d+$/.test(String(stored.llmModel || ''))
     const language = resolveModelConnection('language', {
       provider: stored.llmProvider || 'bailian',
       baseUrl: stored.llmBaseUrl,
-      model: stored.llmModel,
+      model: isLegacyBailianModel ? modelProviders.language.bailian.model : stored.llmModel,
     })
     const image = resolveModelConnection('image', {
       provider: stored.imageProvider || 'yunfei',
@@ -358,7 +367,7 @@ function readConfig() {
       model: stored.imageModel,
     })
     return {
-      enabled: Boolean(stored.enabled && llmApiKey && imageApiKey),
+      enabled: Boolean(stored.enabled && llmApiKey && imageApiKey && !isLegacyBailianModel),
       llmProvider: language.provider,
       llmProtocol: language.protocol,
       llmBaseUrl: language.baseUrl,
