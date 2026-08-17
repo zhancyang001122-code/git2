@@ -57,7 +57,7 @@ pnpm build
 
 API Key 仅写入 `sessionStorage`，关闭标签页后清除，不会进入源码、构建产物或 Git。浏览器直连接口仍要求网络可访问服务商并允许 CORS；正式产品必须改为服务端代理。
 
-上传文件只存在当前 React 模块内存，离开模块或刷新页面即释放；启用真实 API 后，图片会发送给用户选择的第三方模型服务，但 ArchFlow POC 不留存。当前“我的资产”也只存在页面内存，刷新或关闭后消失。跨设备资产、图纸解析、建模、长期文件存储和真实导出仍属于后端能力边界。完整建议见 [`docs/TECHNICAL_ARCHITECTURE.md`](docs/TECHNICAL_ARCHITECTURE.md)。
+上传文件只存在当前 React 模块内存，离开模块或刷新页面即释放；启用真实 API 后，图片会发送给用户选择的第三方模型服务，但 ArchFlow POC 不上传到自己的服务器。AI 渲染结果点击“保存到资产”后，会连同真实生成图一起保留在当前标签页内存，可在“我的资产 → 查看详情”中预览和再次下载；刷新或关闭后仍会消失。跨设备资产、图纸解析、建模、长期文件存储和真实导出仍属于后端能力边界。完整建议见 [`docs/TECHNICAL_ARCHITECTURE.md`](docs/TECHNICAL_ARCHITECTURE.md)。
 
 ## 公开部署
 

@@ -38,7 +38,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import { checkModelConnection, features, generateWithApi, initialAssets, modelProviders, navItems, outputMeta, resolveModelConnection } from './data.js'
+import { checkModelConnection, createAssetRecord, features, generateWithApi, initialAssets, modelProviders, navItems, outputMeta, resolveModelConnection } from './data.js'
 
 const validRoutes = new Set(navItems.map((item) => item.id))
 const sidebarNavItems = navItems.filter((item) => item.id !== 'home')
@@ -103,19 +103,10 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const saveAsset = (feature, prompt) => {
-    const meta = outputMeta[feature.id]
-    const asset = {
-      id: Date.now(),
-      title: prompt.trim().slice(0, 18) || feature.nav.replace('AI ', ''),
-      type: meta.type,
-      files: meta.files,
-      time: '刚刚保存',
-      source: feature.nav,
-      tone: feature.id === 'render' ? 'mist' : feature.id === 'design' ? 'blue' : 'aqua',
-    }
+  const saveAsset = (feature, prompt, result) => {
+    const asset = createAssetRecord(feature, prompt, result)
     setAssets((current) => [asset, ...current])
-    setToast({ title: '已保存到我的资产', detail: `${asset.title} · ${meta.files} 个文件` })
+    setToast({ title: '已保存到我的资产', detail: asset.sessionOnly ? `${asset.title} · 生成图可在当前标签页内继续下载` : `${asset.title} · ${asset.files} 个文件` })
   }
 
   const confirmDelete = (asset) => {
@@ -456,7 +447,7 @@ function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
       onToast({ title: '先选择一套方案', detail: 'A / B / C 三套方案中至少选择一套再保存。' })
       return
     }
-    onSave(feature, prompt)
+    onSave(feature, prompt, result)
   }
 
   return (
@@ -816,7 +807,7 @@ function AssetsView({ assets, onDialog, onNavigate }) {
           {filtered.map((asset) => (
             <article className="asset-card" key={asset.id}>
               <button className={`asset-preview tone-${asset.tone}`} onClick={() => onDialog({ type: 'asset', asset })} aria-label={`查看${asset.title}详情`}><span className="asset-folder"><i/><i/><i/></span><span className="asset-type">{asset.type}</span><span className="asset-count">{asset.files}<small>FILES</small></span></button>
-              <div className="asset-body"><div><small>{asset.source}</small><h2>{asset.title}</h2></div><div className="asset-meta"><span>{asset.time}</span><span>Local POC</span></div><div className="asset-actions"><button className="button button-quiet" onClick={() => onDialog({ type: 'asset', asset })}>查看详情 <Eye /></button><button className="icon-button delete-icon" onClick={() => onDialog({ type: 'delete', asset })} aria-label={`删除${asset.title}`}><Trash2 /></button></div></div>
+              <div className="asset-body"><div><small>{asset.source}</small><h2>{asset.title}</h2></div><div className="asset-meta"><span>{asset.time}</span><span>{asset.sessionOnly ? 'Session Asset' : 'Local POC'}</span></div><div className="asset-actions"><button className="button button-quiet" onClick={() => onDialog({ type: 'asset', asset })}>查看详情 <Eye /></button><button className="icon-button delete-icon" onClick={() => onDialog({ type: 'delete', asset })} aria-label={`删除${asset.title}`}><Trash2 /></button></div></div>
             </article>
           ))}
         </div>
@@ -881,12 +872,13 @@ function Dialog({ data, onClose, onDelete, onToast, onApiChanged }) {
   }
 
   const asset = data.asset
+  const generatedArtifact = asset.artifacts?.[0]
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="dialog-card asset-dialog" role="dialog" aria-modal="true" aria-labelledby="asset-title">
         <button ref={closeRef} className="icon-button dialog-close" onClick={onClose} aria-label="关闭"><X /></button>
-        <div className={`dialog-asset-preview tone-${asset.tone}`}><span className="asset-folder"><i/><i/><i/></span><FileArchive /></div>
-        <div className="dialog-asset-copy"><span className="eyebrow">ASSET PACKAGE</span><h2 id="asset-title">{asset.title}</h2><p>由 {asset.source} 生成，包含可继续编辑的项目成果和过程记录。</p><dl><div><dt>资产类型</dt><dd>{asset.type}</dd></div><div><dt>文件数量</dt><dd>{asset.files} 个</dd></div><div><dt>更新时间</dt><dd>{asset.time}</dd></div></dl><div className="dialog-actions"><button className="button button-secondary" onClick={() => downloadDemo(`${asset.title}.zip`)}>下载资产 <Download /></button><button className="button button-primary" onClick={onClose}>完成 <Check /></button></div></div>
+        <div className={`dialog-asset-preview tone-${asset.tone} ${generatedArtifact ? 'has-generated-asset' : ''}`}>{generatedArtifact ? <img src={generatedArtifact.imageUrl} alt={generatedArtifact.title} /> : <><span className="asset-folder"><i/><i/><i/></span><FileArchive /></>} {generatedArtifact && <span className="session-preview-badge"><Check /> 当前会话真实生成</span>}</div>
+        <div className="dialog-asset-copy"><span className="eyebrow">ASSET PACKAGE</span><h2 id="asset-title">{asset.title}</h2><p>由 {asset.source} 生成，包含可继续编辑的项目成果和过程记录。</p><dl><div><dt>资产类型</dt><dd>{asset.type}</dd></div><div><dt>文件数量</dt><dd>{asset.files} 个</dd></div><div><dt>更新时间</dt><dd>{asset.time}</dd></div></dl>{generatedArtifact && <div className="session-asset-file"><span><ImagePlus /></span><p><strong>{generatedArtifact.title}</strong><small>{generatedArtifact.meta} · 当前标签页内存，刷新后清除</small></p><button className="icon-button" onClick={() => downloadGeneratedAsset(generatedArtifact.imageUrl, generatedArtifact.name)} aria-label={`下载${generatedArtifact.title}`}><Download /></button></div>}<div className="dialog-actions"><button className="button button-secondary" onClick={() => generatedArtifact ? downloadGeneratedAsset(generatedArtifact.imageUrl, generatedArtifact.name) : downloadDemo(`${asset.title}.zip`)}>{generatedArtifact ? '下载生成图' : '下载资产'} <Download /></button><button className="button button-primary" onClick={onClose}>完成 <Check /></button></div></div>
       </section>
     </div>
   )

@@ -135,8 +135,33 @@ export const outputMeta = {
   design: { type: '方案库', files: 12, label: '3 套方案 · 专业比选' },
   beautify: { type: '图纸库', files: 4, label: '2 套表达 · 4K' },
   model: { type: '模型库', files: 3, label: 'SKP · 3DM · 质量报告' },
-  render: { type: '渲染图库', files: 3, label: '1 张效果图 · 原图对照 · 4K' },
+  render: { type: '渲染图库', files: 1, label: '1 张效果图 · 原图对照 · 4K' },
   report: { type: '汇报库', files: 18, label: '12 页 · A3 / PPTX' },
+}
+
+export function createAssetRecord(feature, prompt, result, id = Date.now()) {
+  const meta = outputMeta[feature.id]
+  const title = prompt.trim().slice(0, 18) || feature.nav.replace('AI ', '')
+  const artifacts = feature.id === 'render'
+    ? (result?.images || []).slice(0, 1).map((image, index) => ({
+        id: image.id || index + 1,
+        name: `${title}-AI渲染图-${index + 1}.png`,
+        title: image.title || 'AI 渲染图',
+        meta: image.meta || result.model || '生成图像',
+        imageUrl: image.imageUrl,
+      })).filter((item) => item.imageUrl)
+    : []
+  return {
+    id,
+    title,
+    type: meta.type,
+    files: artifacts.length || meta.files,
+    time: '刚刚保存',
+    source: feature.nav,
+    tone: feature.id === 'render' ? 'mist' : feature.id === 'design' ? 'blue' : 'aqua',
+    artifacts,
+    sessionOnly: artifacts.length > 0,
+  }
 }
 
 export const liveFeatureIds = ['inspiration', 'design', 'render']
@@ -524,6 +549,7 @@ async function generateRenderImages({ prompt, files, config }) {
   form.append('image', imageFile, imageFile.name)
   form.append('n', '1')
   form.append('size', config.imageSize)
+  form.append('response_format', 'b64_json')
   const imageBaseUrl = config.imageProtocol === 'newapi-auto' ? `${newApiRoot(baseUrl)}/v1` : baseUrl
   const response = await fetch(`${imageBaseUrl}/images/edits`, {
     method: 'POST',

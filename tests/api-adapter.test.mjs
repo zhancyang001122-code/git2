@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { File } from 'node:buffer'
 import test from 'node:test'
-import { checkModelConnection, generateWithApi } from '../src/data.js'
+import { checkModelConnection, createAssetRecord, generateWithApi } from '../src/data.js'
 
 let activeConfig = {}
 globalThis.window = {
@@ -101,6 +101,7 @@ test('AI 渲染使用单张图生图接口并返回原图对比数据', async ()
   assert.equal(request.url, 'https://img.yunfei.best/v1/images/edits')
   assert.equal(request.options.body.get('model'), 'gpt-image-2')
   assert.equal(request.options.body.get('n'), '1')
+  assert.equal(request.options.body.get('response_format'), 'b64_json')
   assert.equal(request.options.body.get('image').name, 'white-model.png')
   assert.equal(result.mode, 'external-image-api')
   assert.equal(result.images.length, 1)
@@ -211,4 +212,17 @@ test('第三方 NewAPI 的 Gemini 生图模型自动改走原生 Gemini 端点',
   assert.equal(request.url, 'https://img.yunfei.best/v1beta/models/gemini-3.1-flash-image:generateContent')
   assert.equal(request.options.headers.Authorization, 'Bearer test-image-key')
   assert.match(result.images[0].imageUrl, /^data:image\/png;base64,/)
+})
+
+test('保存 AI 渲染结果时真实图片随资产保留在当前会话', () => {
+  const asset = createAssetRecord(
+    { id: 'render', nav: 'AI 渲染' },
+    '滨水入口蓝调时刻',
+    { model: 'gpt-image-2', images: [{ id: 1, title: '真实生成 · 主视角', meta: '2K', imageUrl: 'data:image/png;base64,ZmFrZQ==' }] },
+    1001,
+  )
+  assert.equal(asset.id, 1001)
+  assert.equal(asset.files, 1)
+  assert.equal(asset.sessionOnly, true)
+  assert.equal(asset.artifacts[0].imageUrl, 'data:image/png;base64,ZmFrZQ==')
 })
