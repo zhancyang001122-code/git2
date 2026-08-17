@@ -79,12 +79,61 @@ async function requireAuthenticatedUser(req: Request) {
   return user
 }
 
-function capabilities() {
+async function checkLanguageConnection(config: ReturnType<typeof languageConfig>) {
+  if (!isReady(config)) return false
+  try {
+    const response = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [{ role: 'user', content: '仅回复 OK' }],
+        max_tokens: 1,
+        stream: false,
+      }),
+    })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
+async function checkImageConnection(config: ImageConfig) {
+  if (!isReady(config)) return false
+  try {
+    const useGemini = config.protocol === 'gemini' || (config.protocol === 'auto' && looksLikeGemini(config.model))
+    const endpoint = useGemini
+      ? `${rootWithoutApiVersion(config.baseUrl)}/v1beta/models`
+      : `${rootWithoutApiVersion(config.baseUrl)}/v1/models`
+    const response = await fetch(endpoint, {
+      headers: useGemini
+        ? { Authorization: `Bearer ${config.apiKey}`, 'x-goog-api-key': config.apiKey }
+        : { Authorization: `Bearer ${config.apiKey}` },
+    })
+    if (!response.ok) return false
+    const payload = await response.json()
+    const modelIds = Array.isArray(payload.data)
+      ? payload.data.map((item: Record<string, unknown>) => String(item.id || '')).filter(Boolean)
+      : Array.isArray(payload.models)
+        ? payload.models.map((item: Record<string, unknown>) => String(item.name || '').replace(/^models\//, '')).filter(Boolean)
+        : []
+    return modelIds.length === 0 || modelIds.includes(config.model)
+  } catch {
+    return false
+  }
+}
+
+async function capabilities() {
   const llm = languageConfig()
-  const images = [imageConfig('image1'), imageConfig('image2')].filter(isReady)
+  const configuredImages = [imageConfig('image1'), imageConfig('image2')]
+  const [languageReady, ...imageConnections] = await Promise.all([
+    checkLanguageConnection(llm),
+    ...configuredImages.map(checkImageConnection),
+  ])
+  const images = configuredImages.filter((_config, index) => imageConnections[index])
   return {
-    languageReady: isReady(llm),
-    languageModel: isReady(llm) ? llm.model : null,
+    languageReady,
+    languageModel: languageReady ? llm.model : null,
     imageModes: images.map(({ id, label, model }) => ({ id, label, model })),
   }
 }
@@ -323,7 +372,7 @@ Deno.serve(async (req: Request) => {
   try {
     await requireAuthenticatedUser(req)
     const body = await req.json()
-    if (body.action === 'capabilities') return json(capabilities())
+    if (body.action === 'capabilities') return json(await capabilities())
     const feature = String(body.feature || '')
     if (feature === 'render') return json(await generateImage(body))
     return json(await generateStructured(body))
