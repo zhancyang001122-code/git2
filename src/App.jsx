@@ -5,7 +5,6 @@ import {
   Bell,
   BrainCircuit,
   Check,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleHelp,
@@ -20,6 +19,7 @@ import {
   Info,
   ImagePlus,
   Link2,
+  LayoutDashboard,
   LoaderCircle,
   Menu,
   MoreHorizontal,
@@ -41,6 +41,7 @@ import {
 import { checkModelConnection, features, generateWithApi, initialAssets, modelProviders, navItems, outputMeta, resolveModelConnection } from './data.js'
 
 const validRoutes = new Set(navItems.map((item) => item.id))
+const sidebarNavItems = navItems.filter((item) => item.id !== 'home')
 
 function getInitialRoute() {
   const hash = window.location.hash.replace('#/', '')
@@ -173,15 +174,20 @@ function Sidebar({ route, open, onNavigate, onClose, onStatus, apiEnabled }) {
           <button className="icon-button sidebar-close" onClick={onClose} aria-label="关闭导航"><X /></button>
         </div>
 
-        <button className="project-switcher" type="button">
-          <span className="project-avatar">JN</span>
-          <span className="project-copy"><small>CURRENT PROJECT</small><strong>江南水岸文化中心</strong></span>
-          <ChevronDown />
+        <button
+          className={`project-switcher ${route === 'home' ? 'is-active' : ''}`}
+          type="button"
+          onClick={() => onNavigate('home')}
+          aria-current={route === 'home' ? 'page' : undefined}
+        >
+          <span className="project-avatar"><LayoutDashboard /></span>
+          <span className="project-copy"><small>WORKSPACE HOME</small><strong>工作台</strong></span>
+          <ArrowRight />
         </button>
 
         <nav className="nav-stack">
-          <p className="nav-caption">WORKSPACE</p>
-          {navItems.map((item, index) => {
+          <p className="nav-caption">AI WORKFLOW</p>
+          {sidebarNavItems.map((item) => {
             const Icon = item.icon
             const separated = item.id === 'assets'
             return (
@@ -193,7 +199,7 @@ function Sidebar({ route, open, onNavigate, onClose, onStatus, apiEnabled }) {
               >
                 <span className="nav-icon"><Icon /></span>
                 <span>{item.nav}</span>
-                {index > 0 && index < 7 && <small>{String(index).padStart(2, '0')}</small>}
+                {item.number && <small>{item.number}</small>}
               </button>
             )
           })}
@@ -386,14 +392,18 @@ function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
     onToast({ title: '已粘贴图片', detail: `${added} 张图片已加入本次临时附件，可直接用于识图或渲染。` })
   }
 
+  const isFileDrag = (event) => Array.from(event.dataTransfer?.types || []).includes('Files')
+
   const handleDragEnter = (event) => {
+    if (!isFileDrag(event)) return
     event.preventDefault()
     event.stopPropagation()
     dragDepth.current += 1
-    if (event.dataTransfer?.types?.includes('Files')) setDragActive(true)
+    setDragActive(true)
   }
 
   const handleDragLeave = (event) => {
+    if (!isFileDrag(event)) return
     event.preventDefault()
     event.stopPropagation()
     dragDepth.current = Math.max(0, dragDepth.current - 1)
@@ -401,12 +411,14 @@ function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
   }
 
   const handleDragOver = (event) => {
+    if (!isFileDrag(event)) return
     event.preventDefault()
     event.stopPropagation()
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
   }
 
   const handleDrop = (event) => {
+    if (!event.dataTransfer?.files?.length) return
     event.preventDefault()
     event.stopPropagation()
     dragDepth.current = 0
@@ -459,7 +471,14 @@ function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
       </header>
 
       <section className="composer-layout" aria-label={`${feature.nav}输入区`}>
-        <div className="composer-panel glass-panel" onPaste={handlePaste}>
+        <div
+          className={`composer-panel glass-panel ${dragActive ? 'is-dragging' : ''}`}
+          onPaste={handlePaste}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+        >
           <div className="panel-heading"><span><Sparkles /></span><div><h2>告诉 ArchFlow 你正在做什么</h2><p>像和项目搭档沟通一样，写清目标和限制条件。</p></div></div>
           {files.length > 0 && <FilePreviewList files={files} onRemove={(index) => setFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))} />}
           <label className="field-label" htmlFor={`prompt-${feature.id}`}>项目描述 <strong>必填</strong></label>
@@ -473,18 +492,13 @@ function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
               maxLength="800"
             />
             <span className="char-count">{prompt.length} / 800</span>
+            <div className="prompt-drop-overlay" aria-hidden={!dragActive}><UploadCloud /><strong>松开即可上传到项目描述</strong><small>图片会显示预览，文件数量同步更新</small></div>
           </div>
           <div className="quick-row">
             <span>快速补充</span>
             <div>{feature.chips.map((chip) => <button key={chip} onClick={() => useChip(chip)}>{chip}<Plus /></button>)}</div>
           </div>
-          <div
-            className={`upload-zone ${dragActive ? 'is-dragging' : ''}`}
-            onDragEnter={handleDragEnter}
-            onDragLeave={handleDragLeave}
-            onDragOver={handleDragOver}
-            onDrop={handleDrop}
-          >
+          <div className="upload-zone">
             <input
               id={`files-${feature.id}`}
               className="sr-only"
@@ -501,7 +515,6 @@ function FeatureWorkspace({ feature, onNavigate, onSave, onDialog, onToast }) {
               <span><strong>{files.length ? `已加载 ${files.length} 个临时文件` : '上传项目资料'}</strong><small>{files.length ? '可继续选择、拖入文件或按 Ctrl + V 粘贴图片，最多保留 6 个' : '选择、拖拽或 Ctrl + V 均可上传；PDF / DWG 当前仅记录文件名'}</small></span>
               <span className="button button-quiet upload-button">选择文件{files.length > 0 && <em>{files.length}</em>}</span>
             </label>
-            <div className="drop-overlay" aria-hidden={!dragActive}><UploadCloud /><strong>松开即可加入本次任务</strong><small>最多 6 个临时文件</small></div>
           </div>
           <div className="composer-footer">
             <span><Cloud /> 仅保存在当前页面内存，离开模块即释放</span>
