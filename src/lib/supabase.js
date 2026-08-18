@@ -1,13 +1,22 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || '').trim()
+// These values are public browser configuration, not server secrets. Keeping a
+// checked-in fallback prevents a missing Vercel/GitHub build variable from
+// silently disabling cross-device login during a demo.
+const defaultSupabaseUrl = 'https://mblnorfsegteomazffwy.supabase.co'
+const defaultSupabasePublishableKey = 'sb_publishable_Gn8SniEtQm0cnqdEcIS8xw_HIwAl1a5'
+const defaultInternalAccountEmail = 'internal-account-1@archflow.local'
+
+const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || defaultSupabaseUrl).trim()
 const supabasePublishableKey = String(
-  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || '',
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+    || import.meta.env.VITE_SUPABASE_ANON_KEY
+    || defaultSupabasePublishableKey,
 ).trim()
 
 export const internalAccountUsername = '内部账户1'
 export const internalAccountEmail = String(
-  import.meta.env.VITE_INTERNAL_ACCOUNT_EMAIL || 'internal-account-1@archflow.local',
+  import.meta.env.VITE_INTERNAL_ACCOUNT_EMAIL || defaultInternalAccountEmail,
 ).trim()
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabasePublishableKey)
@@ -30,6 +39,15 @@ function requireClient() {
 function unwrap({ data, error }) {
   if (error) throw error
   return data
+}
+
+function readableAuthError(error) {
+  const message = String(error?.message || '')
+  if (message === 'Invalid login credentials') return '账号或密码不正确，请确认使用内部账户的 8 位密码。'
+  if (/failed to fetch|network|load failed/i.test(message)) return '无法连接登录服务，请检查网络后重试。'
+  if (/rate limit|too many requests/i.test(message)) return '登录尝试过于频繁，请稍等一分钟后重试。'
+  if (/email not confirmed/i.test(message)) return '内部账户尚未完成验证，请联系管理员。'
+  return message || '登录服务暂时不可用，请稍后重试。'
 }
 
 function formatMemoTime(value) {
@@ -109,7 +127,8 @@ export async function signInInternalAccount(username, password) {
     email: internalAccountEmail,
     password,
   })
-  if (error) throw new Error(error.message === 'Invalid login credentials' ? '账号或密码不正确。' : error.message)
+  if (error) throw new Error(readableAuthError(error))
+  if (!data.session) throw new Error('登录服务未返回有效会话，请稍后重试。')
   return data.session
 }
 
