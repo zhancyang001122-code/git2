@@ -59,6 +59,8 @@ test('方案灵感使用语言模型结构化结果', async () => {
   const payload = JSON.parse(request.options.body)
   assert.equal(payload.model, 'qwen-plus')
   assert.equal('temperature' in payload, false)
+  assert.match(payload.messages[0].content, /施工图审查负责人/)
+  assert.match(payload.messages[0].content, /缺失的规范、尺寸、容积率或工程数据不得编造/)
   assert.equal(result.mode, 'external-language-api')
   assert.equal(result.structured.directions.length, 3)
   assert.deepEqual(result.structured.caseIds, ['panlong', 'tank', 'longmuseum'])
@@ -104,10 +106,33 @@ test('AI 渲染使用单张图生图接口并返回原图对比数据', async ()
   assert.equal(request.options.body.get('model'), 'gpt-image-2')
   assert.equal(request.options.body.get('n'), '1')
   assert.equal(request.options.body.get('response_format'), 'b64_json')
+  assert.equal(request.options.body.get('quality'), 'high')
+  assert.equal(request.options.body.get('output_format'), 'png')
+  assert.match(request.options.body.get('prompt'), /严格保持建筑轮廓、体量层级、层数/)
   assert.equal(request.options.body.get('image').name, 'white-model.png')
   assert.equal(result.mode, 'external-image-api')
   assert.equal(result.images.length, 1)
   assert.match(result.images[0].imageUrl, /^data:image\/png;base64,/)
+  assert.match(result.originalImageUrl, /^data:image\/png;base64,/)
+})
+
+test('AI 图纸美化使用独立的审图级保真提示词和真实生图结果', async () => {
+  activeConfig = baseConfig
+  let request
+  globalThis.fetch = async (url, options) => {
+    request = { url, options }
+    return { ok: true, json: async () => ({ data: [{ b64_json: 'YmVhdXRpZmllZA==' }] }) }
+  }
+
+  const drawing = new File([new Uint8Array([137, 80, 78, 71])], 'site-plan.png', { type: 'image/png' })
+  const result = await generateWithApi({ feature: 'beautify', prompt: '低饱和蓝绿色，突出公共空间', files: [drawing] })
+  assert.equal(request.url, 'https://img.yunfei.best/v1/images/edits')
+  assert.match(request.options.body.get('prompt'), /只提升表达、不改变设计/)
+  assert.match(request.options.body.get('prompt'), /轴网、墙体、柱网、门窗/)
+  assert.match(request.options.body.get('prompt'), /低饱和蓝绿色，突出公共空间/)
+  assert.equal(result.feature, 'beautify')
+  assert.equal(result.mode, 'external-image-api')
+  assert.equal(result.images[0].title, '真实生成 · 图纸美化')
   assert.match(result.originalImageUrl, /^data:image\/png;base64,/)
 })
 
@@ -158,6 +183,7 @@ test('Gemini 生图协议支持参考图输入与图片响应', async () => {
   const result = await generateWithApi({ feature: 'render', prompt: '暖色夜景', files: [image] })
   assert.equal(request.url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent')
   assert.equal(request.options.headers['x-goog-api-key'], 'test-image-key')
+  assert.equal(JSON.parse(request.options.body).generationConfig.imageConfig.imageSize, '4K')
   assert.match(result.images[0].imageUrl, /^data:image\/png;base64,/)
 })
 

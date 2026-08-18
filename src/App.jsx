@@ -505,6 +505,7 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
   const dragDepth = useRef(0)
   const activeRef = useRef(active)
   const scrollOnReveal = useRef(false)
+  const usesImageModel = ['beautify', 'render'].includes(feature.id)
 
   useEffect(() => {
     activeRef.current = active
@@ -591,8 +592,8 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
       onToast({ title: '请先描述任务', detail: '至少填写项目类型、场地或目标成果。' })
       return
     }
-    if (feature.id === 'render' && !files.some((file) => file.type?.startsWith('image/'))) {
-      onToast({ title: '请先上传参考图', detail: 'AI 渲染需要一张白模或原始效果图，生成后才能进行滑杆对比。' })
+    if (usesImageModel && !files.some((file) => file.type?.startsWith('image/'))) {
+      onToast({ title: '请先上传参考图', detail: feature.id === 'beautify' ? 'AI 图纸美化需要一张原始图纸，生成后才能进行滑杆对比。' : 'AI 渲染需要一张白模或原始效果图，生成后才能进行滑杆对比。' })
       return
     }
     setLoading(true)
@@ -701,7 +702,7 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
           <div className="composer-footer">
             <span><Cloud /> {managed ? '项目资料仍为临时附件 · 生成记录登录后云端保留' : '当前标签页内存 · 切换栏目不中断，刷新后释放'}</span>
             <div className="composer-actions">
-              {feature.id === 'render' && <label className={`image-mode-picker ${renderImageModes.length === 1 ? 'is-locked' : ''}`}><span><ImagePlus /> 生图模式</span><select aria-label="选择生图 API" value={imageMode} onChange={(event) => setImageMode(event.target.value)} disabled={loading || renderImageModes.length === 1}>{renderImageModes.map((mode) => <option value={mode.id} key={mode.id}>{mode.label} · {mode.model}</option>)}</select></label>}
+              {usesImageModel && <label className={`image-mode-picker ${renderImageModes.length === 1 ? 'is-locked' : ''}`}><span><ImagePlus /> 生图模式</span><select aria-label="选择生图 API" value={imageMode} onChange={(event) => setImageMode(event.target.value)} disabled={loading || renderImageModes.length === 1}>{renderImageModes.map((mode) => <option value={mode.id} key={mode.id}>{mode.label} · {mode.model}</option>)}</select></label>}
               <button className="button button-primary generate-button" onClick={handleGenerate} disabled={loading}>
                 {loading ? <><LoaderCircle className="spin" /> 正在分析</> : <>生成专业结果 <WandSparkles /></>}
               </button>
@@ -792,7 +793,7 @@ function OutputPanel({ feature, result, selectedScheme, setSelectedScheme, onSav
 
       {feature.id === 'inspiration' && <InspirationOutput data={result.structured} />}
       {feature.id === 'design' && <DesignOutput data={result.structured} selected={selectedScheme} onSelect={setSelectedScheme} />}
-      {feature.id === 'beautify' && <BeautifyOutput />}
+      {feature.id === 'beautify' && <BeautifyOutput images={result.images} originalImageUrl={result.originalImageUrl} />}
       {feature.id === 'model' && <ModelOutput onToast={onToast} />}
       {feature.id === 'render' && <RenderOutput images={result.images} originalImageUrl={result.originalImageUrl} onDialog={onDialog} />}
       {feature.id === 'report' && <ReportOutput onToast={onToast} />}
@@ -816,9 +817,9 @@ function InspirationOutput({ data }) {
   ]
   const directions = (data?.directions || fallbackDirections).map((item, index) => ({ ...item, code: ['A', 'B', 'C'][index], tone: ['aqua', 'blue', 'mist'][index] }))
   const verifiedCases = {
-    panlong: { title: '上海蟠龙天地 / BWSS', location: '上海 · 2026', href: 'https://www.archdaily.com/1039351/shanghai-panlong-tiandi-bwss', tag: '水乡更新' },
-    tank: { title: '上海油罐艺术中心 / OPEN', location: '上海西岸 · 2019', href: 'https://www.archdaily.com/935196/tank-shanghai-open-architecture', tag: '工业遗存' },
-    longmuseum: { title: '龙美术馆西岸馆 / 大舍', location: '上海西岸 · 2014', href: 'https://www.archdaily.com/554661/long-museum-west-bund-atelier-deshaus', tag: '结构原型' },
+    panlong: { title: '上海蟠龙天地 / BWSS', location: '上海 · 2023', href: 'https://www.archdaily.com/1039351/shanghai-panlong-tiandi-bwss', image: `${import.meta.env.BASE_URL}case-thumbnails/panlong-tiandi.jpg`, credit: '© Xia Wen', tag: '水乡更新' },
+    tank: { title: '上海油罐艺术中心 / OPEN', location: '上海西岸 · 2019', href: 'https://www.archdaily.com/935196/tank-shanghai-open-architecture', image: `${import.meta.env.BASE_URL}case-thumbnails/tank-shanghai.jpg`, credit: '© Qingshan Wu', tag: '工业遗存' },
+    longmuseum: { title: '龙美术馆西岸馆 / 大舍', location: '上海西岸 · 2014', href: 'https://www.archdaily.com/554661/long-museum-west-bund-atelier-deshaus', image: `${import.meta.env.BASE_URL}case-thumbnails/long-museum-west-bund.jpg`, credit: '© Shengliang Su', tag: '结构原型' },
   }
   const selectedCaseIds = data?.caseIds?.length ? data.caseIds : Object.keys(verifiedCases)
   const cases = selectedCaseIds.map((id) => verifiedCases[id]).filter(Boolean)
@@ -829,20 +830,25 @@ function InspirationOutput({ data }) {
       <div className="direction-grid">
         {directions.map((item) => (
           <article className={`direction-card tone-${item.tone}`} key={item.code}>
-            <div className="direction-visual"><span>{item.code}</span><i /><i /><i /></div>
-            <div className="direction-body"><small>{item.subtitle}</small><h4>{item.title}</h4><p>{item.strategy}</p><div>{item.keywords.map((tag) => <span key={tag}>#{tag}</span>)}</div></div>
+            <div className="direction-body">
+              <div className="direction-card-head"><span>{item.code}</span><small>{item.subtitle}</small></div>
+              <h4>{item.title}</h4><p>{item.strategy}</p>
+              <div className="direction-keywords">{item.keywords.map((tag) => <span key={tag}>#{tag}</span>)}</div>
+            </div>
           </article>
         ))}
       </div>
       <div className="strategy-board">
-        <div className="strategy-map"><span className="map-core">{data?.coreConcept || '滨水文化公共客厅'}</span><span className="map-node node-a">{sharedStrategies[0]?.slice(0, 6)}</span><span className="map-node node-b">{sharedStrategies[1]?.slice(0, 6)}</span><span className="map-node node-c">{sharedStrategies[2]?.slice(0, 6)}</span><i /><i /><i /></div>
-        <div className="strategy-copy"><span className="eyebrow">SPACE STRATEGY</span><h3>共同空间策略</h3><ul>{sharedStrategies.map((strategy) => <li key={strategy}>{strategy}</li>)}</ul></div>
+        <div className="strategy-copy">
+          <div className="strategy-copy-head"><div><span className="eyebrow">SPACE STRATEGY</span><h3>共同空间策略</h3></div><p>{data?.coreConcept || '滨水文化公共客厅'}</p></div>
+          <ol>{sharedStrategies.map((strategy, index) => <li key={strategy}><span>{String(index + 1).padStart(2, '0')}</span><p>{strategy}</p></li>)}</ol>
+        </div>
       </div>
       <div className="result-section-head"><div><span>02</span><h3>相关案例</h3></div><p>点击卡片直接进入原案例，面试演示时可说明检索依据。</p></div>
       <div className="case-grid">
         {cases.map((item, index) => (
           <a className={`case-card case-${index + 1}`} href={item.href} target="_blank" rel="noreferrer" key={item.title}>
-            <span className="case-art"><i /><i /><i /></span>
+            <span className="case-art"><img src={item.image} alt={`${item.title} 项目实景`} loading="lazy" /><small>项目实景 · {item.credit}</small></span>
             <span className="case-copy"><small>{item.location}</small><strong>{item.title}</strong><em>{item.tag}</em></span><ExternalLink />
           </a>
         ))}
@@ -882,22 +888,23 @@ function DesignOutput({ data, selected, onSelect }) {
   )
 }
 
-function BeautifyOutput() {
+function BeautifyOutput({ images, originalImageUrl }) {
   const [position, setPosition] = useState(54)
+  const beautified = images?.[0]
   const drawing = <><span className="river"/><span className="building b1"/><span className="building b2"/><span className="building b3"/><span className="green g1"/><span className="green g2"/><span className="road"/></>
   return (
     <div className="result-stack">
       <div className="result-section-head"><div><span>01</span><h3>图纸前后对比</h3></div><p>拖动中线查看增强效果；原图线稿、文字和尺寸关系保持不变。</p></div>
       <article className="render-compare-card beautify-compare-card">
         <div className="render-compare beautify-compare" style={{ '--compare-position': `${position}%` }}>
-          <div className="render-compare-layer drawing is-generated">{drawing}<span className="compare-label is-after">美化后</span></div>
-          <div className="render-compare-layer drawing is-original">{drawing}<span className="compare-label is-before">原图</span></div>
+          <div className={`render-compare-layer drawing is-generated ${beautified?.imageUrl ? 'has-real-image' : ''}`}>{beautified?.imageUrl ? <img src={beautified.imageUrl} alt="AI 图纸美化后" /> : drawing}<span className="compare-label is-after">美化后</span></div>
+          <div className={`render-compare-layer drawing is-original ${originalImageUrl ? 'has-real-image' : ''}`}>{originalImageUrl ? <img src={originalImageUrl} alt="上传的原始图纸" /> : drawing}<span className="compare-label is-before">原图</span></div>
           <span className="compare-line" aria-hidden="true"><i><MousePointer2 /></i></span>
           <input aria-label="拖动查看原图和图纸美化效果" type="range" min="0" max="100" value={position} onInput={(event) => setPosition(Number(event.currentTarget.value))} onChange={(event) => setPosition(Number(event.currentTarget.value))} />
         </div>
-        <div className="render-compare-meta"><span><strong>总平面图 · 层次美化</strong><small>原图 / 美化后 · 拖动滑杆对比</small></span><button className="button button-secondary" onClick={() => downloadDemo('ArchFlow-beautified-plan.png')}><Download /> 下载美化图</button></div>
+        <div className="render-compare-meta"><span><strong>{beautified?.title || '总平面图 · 层次美化'}</strong><small>{beautified?.meta ? `${beautified.meta} · ` : ''}原图 / 美化后 · 拖动滑杆对比</small></span><button className="button button-secondary" onClick={() => beautified?.imageUrl ? downloadGeneratedAsset(beautified.imageUrl, `ArchFlow-beautified-${beautified.id}.png`) : downloadDemo('ArchFlow-beautified-plan.png')}><Download /> 下载美化图</button></div>
       </article>
-      <div className="drawing-stats"><div><strong>100%</strong><span>线稿保留</span></div><div><strong>5</strong><span>空间层级</span></div><div><strong>4K</strong><span>输出分辨率</span></div><div><strong>02</strong><span>配色版本</span></div></div>
+      <div className="drawing-stats"><div><strong>100%</strong><span>几何保留目标</span></div><div><strong>5</strong><span>表达层级</span></div><div><strong>MAX</strong><span>模型最高画质</span></div><div><strong>01</strong><span>单张成果</span></div></div>
     </div>
   )
 }

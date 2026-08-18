@@ -133,20 +133,20 @@ export const initialAssets = [
 export const outputMeta = {
   inspiration: { type: '灵感库', files: 8, label: '3 个方向 · 3 个案例' },
   design: { type: '方案库', files: 12, label: '3 套方案 · 专业比选' },
-  beautify: { type: '图纸库', files: 4, label: '2 套表达 · 4K' },
+  beautify: { type: '图纸库', files: 1, label: '1 张图纸 · 原图对照 · 模型最高画质' },
   model: { type: '模型库', files: 3, label: 'SKP · 3DM · 质量报告' },
-  render: { type: '渲染图库', files: 1, label: '1 张效果图 · 原图对照 · 4K' },
+  render: { type: '渲染图库', files: 1, label: '1 张效果图 · 原图对照 · 模型最高画质' },
   report: { type: '汇报库', files: 18, label: '12 页 · A3 / PPTX' },
 }
 
 export function createAssetRecord(feature, prompt, result, id = Date.now()) {
   const meta = outputMeta[feature.id]
   const title = prompt.trim().slice(0, 18) || feature.nav.replace('AI ', '')
-  const artifacts = feature.id === 'render'
+  const artifacts = ['beautify', 'render'].includes(feature.id)
     ? (result?.images || []).slice(0, 3).map((image, index) => ({
         id: image.id || index + 1,
-        name: `${title}-AI渲染图-${index + 1}.png`,
-        title: image.title || 'AI 渲染图',
+        name: `${title}-${feature.id === 'beautify' ? '图纸美化' : 'AI渲染'}-${index + 1}.png`,
+        title: image.title || (feature.id === 'beautify' ? '图纸美化成果' : 'AI 渲染图'),
         meta: image.meta || result.model || '生成图像',
         imageUrl: image.imageUrl,
       })).filter((item) => item.imageUrl)
@@ -158,13 +158,13 @@ export function createAssetRecord(feature, prompt, result, id = Date.now()) {
     files: artifacts.length || meta.files,
     time: '刚刚保存',
     source: feature.nav,
-    tone: feature.id === 'render' ? 'mist' : feature.id === 'design' ? 'blue' : 'aqua',
+    tone: feature.id === 'render' ? 'mist' : ['design', 'beautify'].includes(feature.id) ? 'blue' : 'aqua',
     artifacts,
     sessionOnly: artifacts.length > 0,
   }
 }
 
-export const liveFeatureIds = ['inspiration', 'design', 'render']
+export const liveFeatureIds = ['inspiration', 'design', 'beautify', 'render']
 
 const presetEnv = import.meta.env || {}
 
@@ -279,6 +279,10 @@ function newApiRoot(baseUrl) {
 
 function isGeminiImageModel(model) {
   return /(gemini.*image|nano.?banana)/i.test(model)
+}
+
+function maxGeminiImageSize(model) {
+  return /gemini-3(?:\.\d+)?-(?:flash|pro)-image/i.test(model) ? '4K' : ''
 }
 
 export async function checkModelConnection(kind, values, { timeoutMs = 12000 } = {}) {
@@ -491,13 +495,48 @@ function validateStructuredResult(feature, data) {
 
 function getStructuredPrompt(feature) {
   if (feature === 'inspiration') {
-    return `你是资深建筑设计总监。输出必须是严格 JSON，不要 Markdown，不要解释。结构如下：
+    return `你是同时具备建筑设计总监、方案主创建筑师与施工图审查负责人经验的专业建筑顾问。你的任务是把输入转译为可进入真实方案讨论的设计判断，不是生成空泛概念文案。
+
+专业工作准则：
+1. 先识别项目类型、场地矛盾、规模、使用者、气候、城市界面与既有条件，再提出策略。
+2. 每个方向必须说明具体空间动作，并至少覆盖体量组织、公共空间或流线、场地/气候响应中的三项；避免“融合、赋能、打造”等无动作支撑的套话。
+3. 用户明确提供的条件视为事实；合理推断必须保持克制；缺失的规范、尺寸、容积率或工程数据不得编造。
+4. 三个方向必须在空间原型和组织逻辑上真正不同，而不是只更换名称。
+5. 语言准确、简洁、符合建筑师汇报语境，结论应能被画成草图并继续深化。
+6. 案例只能从 panlong、tank、longmuseum 三个已审核案例中选择，不得编造项目、年份或网址。
+
+输出必须是严格 JSON，不要 Markdown，不要解释，不要输出结构之外的字段。结构如下：
 {"coreConcept":"10字以内核心概念","directions":[{"title":"中文方向名","subtitle":"英文副标题","strategy":"80字内空间策略","keywords":["关键词1","关键词2","关键词3"]},{},{ }],"sharedStrategies":["策略1","策略2","策略3"],"caseIds":["panlong","tank","longmuseum"]}
-必须给出三条逻辑明显不同且可落地的方向。案例只能从 panlong、tank、longmuseum 三个已审核案例中选择，不得编造网址。`
+每条 strategy 使用完整专业句，清楚写出“针对什么问题—采取什么空间动作—产生什么结果”；sharedStrategies 应是三条方向均需遵守的场地、流线、气候或建造底线。`
   }
-  return `你是资深建筑方案设计总监。输出必须是严格 JSON，不要 Markdown，不要解释。结构如下：
+  return `你是同时具备建筑设计总监、方案主创建筑师与施工图审查负责人经验的专业建筑顾问。你需要给出能进入方案评审的 A / B / C 比选，不是概念口号。
+
+专业工作准则：
+1. 先核对用地、规模、功能、交通、消防、日照、限高、分期与成本信息；输入未提供的数据不得伪造。
+2. 三套方案必须分别建立不同的体量拓扑、功能组织、首层公共性与交通逻辑，并说明其适用条件和代价。
+3. 数值只能基于用户已给条件做推导；无法核算时使用“待测算”或“待校核”，不得制造看似精确的指标。
+4. 从建筑、结构、机电、消防疏散、幕墙/材料、运营与建造复杂度角度检查明显矛盾，但不要在缺少属地规范时声称“已合规”。
+5. 语言应准确、克制、可执行，优先表达空间关系、尺度逻辑和决策依据，避免空泛营销措辞。
+
+输出必须是严格 JSON，不要 Markdown，不要解释，不要输出结构之外的字段。结构如下：
 {"schemes":[{"name":"中文方案名","far":"如 FAR 2.42","description":"80字内空间与功能策略","pros":"两项核心优势，用 / 分隔","metrics":{"openRate":"百分比","efficiency":"百分比","complexity":"低/中/高","recommendation":"10字内结论"}},{},{ }]}
-必须给出 A / B / C 三套体量与组织逻辑明显不同的可比较方案，指标应彼此合理且不完全相同。`
+description 必须说明体量、功能、流线和公共空间中的至少三项；recommendation 写清适用场景或首要风险。`
+}
+
+function getImagePrompt(feature, userPrompt) {
+  const shared = `\n\n通用质量标准：以用户上传图像为唯一几何依据，输出单张连续完整画面；最高细节、清晰锐利边缘、准确尺度、无压缩损失的专业交付品质。禁止水平条纹、扫描线、重复切片、错位拼接、重影、色带、画面撕裂、局部复制、几何融化、模糊文字、乱码、签名、Logo、水印和边框。不得裁切关键主体。用户补充要求：${userPrompt}`
+  if (feature === 'beautify') {
+    return `你是建筑制图总监与审图负责人，正在对一张建筑图纸做“只提升表达、不改变设计”的高保真图生图编辑。
+
+强制保留：原图全部几何边界、轴网、墙体、柱网、门窗、道路、等高线、尺寸、标高、索引、文字、图名、指北针、比例尺及其位置与内容；不新增、不删除、不移动、不改写任何设计信息。
+表达优化：建立清楚的线宽层级和空间图底关系；建筑实体、公共空间、道路、绿地和水体使用克制且可区分的低饱和配色；阴影方向统一、深浅适度；保持正投影、平面制图语言和白底洁净感。文字必须保持原样且清晰可读，不生成伪文字。
+禁止：透视化、摄影化、改变平面功能、重画建筑轮廓、增减景观构筑物、移动标注、过度纹理、强渐变、插画滤镜或竞赛图式的无意义装饰。${shared}`
+  }
+  return `你是国际建筑可视化总监与建筑审图负责人，正在把白模或原始效果图提升为可用于方案评审的高保真建筑表现图。
+
+几何锁定：严格保持建筑轮廓、体量层级、层数、开间、门窗洞口、屋面、结构节奏、场地边界、地平线、消失点、相机高度、焦距感、视角与构图；不得擅自增减楼层、改变立面比例、扭曲竖向线或移动主体。
+专业表现：材质符合真实构造与尺度，反射和粗糙度物理可信；室内外光照方向一致，曝光与白平衡自然；景观、铺装、车辆和人物只用于表达尺度与使用状态，不遮挡建筑关键界面；细部达到建筑可视化成片标准，画面克制、真实、具有可建造感。
+禁止：概念艺术化、过度戏剧灯光、超现实天空、过量人群、错误结构、漂浮物体、重复人物、塑料材质、过度锐化与虚假景深。${shared}`
 }
 
 async function generateStructuredText({ feature, prompt, files, config, options }) {
@@ -509,7 +548,7 @@ async function generateStructuredText({ feature, prompt, files, config, options 
       type: 'text',
       text: `${prompt}\n\n本次临时附件：${fileNames}\n附加选项：${JSON.stringify(options)}\n请结合附件图像中的场地、体量或空间信息作答。`,
     },
-    ...imageUrls.map((url) => ({ type: 'image_url', image_url: { url, detail: 'auto' } })),
+    ...imageUrls.map((url) => ({ type: 'image_url', image_url: { url, detail: 'high' } })),
   ]
   const endpoint = `${config.llmBaseUrl.replace(/\/$/, '')}/chat/completions`
   const response = await fetch(endpoint, {
@@ -532,11 +571,11 @@ async function generateStructuredText({ feature, prompt, files, config, options 
   return { content, structured: validateStructuredResult(feature, extractJson(content)) }
 }
 
-async function generateRenderImages({ prompt, files, config }) {
+async function generateRenderImages({ feature, prompt, files, config }) {
   const imageFile = files.find((file) => file.type?.startsWith('image/'))
-  if (!imageFile) throw new Error('AI 渲染需要先上传一张白模或原始效果图。')
+  if (!imageFile) throw new Error(`${feature === 'beautify' ? 'AI 图纸美化' : 'AI 渲染'}需要先上传一张${feature === 'beautify' ? '原始图纸' : '白模或原始效果图'}。`)
   const baseUrl = config.imageBaseUrl.replace(/\/$/, '')
-  const renderPrompt = `专业建筑可视化效果图。严格保留原始建筑主体、体量关系、相机视角和构图，只根据以下要求改善材质、景观、灯光与氛围：${prompt}。输出必须是一张连续、完整、清晰的画面；禁止水平条纹、扫描线、重复切片、错位拼接、重影、色带、画面撕裂或压缩伪影，不得复制或错位任何图像区域。画面克制、真实、可用于建筑方案汇报，不添加文字或水印。`
+  const imagePrompt = getImagePrompt(feature, prompt)
 
   if (imageFile.size > 15 * 1024 * 1024) throw new Error('渲染参考图超过 15MB，请压缩后重新上传。')
   const originalImageUrl = await fileToDataUrl(imageFile, 15)
@@ -549,6 +588,9 @@ async function generateRenderImages({ prompt, files, config }) {
     const base64Image = originalImageUrl.split(',')[1]
     const isNativeGoogle = config.imageProtocol === 'gemini-generate'
     const geminiBaseUrl = isNativeGoogle ? baseUrl : `${newApiRoot(baseUrl)}/v1beta`
+    const imageSize = maxGeminiImageSize(config.imageModel)
+    const imageConfig = { aspectRatio: feature === 'beautify' ? '4:3' : '16:9' }
+    if (imageSize) imageConfig.imageSize = imageSize
     const response = await fetch(`${geminiBaseUrl}/models/${encodeURIComponent(config.imageModel)}:generateContent`, {
       method: 'POST',
       headers: {
@@ -560,11 +602,11 @@ async function generateRenderImages({ prompt, files, config }) {
       body: JSON.stringify({
         contents: [{ parts: [
           { inlineData: { mimeType: imageFile.type, data: base64Image } },
-          { text: renderPrompt },
+          { text: imagePrompt },
         ] }],
         generationConfig: {
           responseModalities: ['IMAGE'],
-          imageConfig: { aspectRatio: '16:9', imageSize: '2K' },
+          imageConfig,
         },
       }),
     })
@@ -581,8 +623,8 @@ async function generateRenderImages({ prompt, files, config }) {
       originalImageUrl,
       images: [{
         id: 1,
-        title: '真实生成 · 主视角',
-        meta: `${config.imageModel} · 2K`,
+        title: feature === 'beautify' ? '真实生成 · 图纸美化' : '真实生成 · 主视角',
+        meta: `${config.imageModel} · ${imageSize || '模型原生最高分辨率'}`,
         imageUrl: `data:${inlineData.mimeType || inlineData.mime_type || 'image/png'};base64,${inlineData.data}`,
       }],
     }
@@ -590,10 +632,13 @@ async function generateRenderImages({ prompt, files, config }) {
 
   const form = new FormData()
   form.append('model', config.imageModel)
-  form.append('prompt', renderPrompt)
+  form.append('prompt', imagePrompt)
   form.append('image', imageFile, imageFile.name)
   form.append('n', '1')
   form.append('size', config.imageSize)
+  form.append('quality', 'high')
+  form.append('output_format', 'png')
+  form.append('output_compression', '100')
   form.append('response_format', 'b64_json')
   const imageBaseUrl = config.imageProtocol === 'newapi-auto' ? `${newApiRoot(baseUrl)}/v1` : baseUrl
   const response = await fetch(`${imageBaseUrl}/images/edits`, {
@@ -609,8 +654,8 @@ async function generateRenderImages({ prompt, files, config }) {
   const payload = await response.json()
   const images = (payload.data || []).slice(0, 1).map((item, index) => ({
     id: index + 1,
-    title: index === 0 ? '真实生成 · 主视角' : '真实生成 · 候选视角',
-    meta: `${config.imageModel} · ${config.imageSize}`,
+    title: feature === 'beautify' ? '真实生成 · 图纸美化' : index === 0 ? '真实生成 · 主视角' : '真实生成 · 候选视角',
+    meta: `${config.imageModel} · ${config.imageSize} · HIGH`,
     imageUrl: item.b64_json ? `data:image/png;base64,${item.b64_json}` : item.url,
   })).filter((item) => item.imageUrl)
   if (!images.length) throw new Error('图像 API 已响应，但没有返回可显示的图片。')
@@ -622,11 +667,11 @@ export async function generateWithApi({ feature, prompt, files = [], options = {
   const isLiveFeature = liveFeatureIds.includes(feature)
 
   if (config.enabled && isLiveFeature) {
-    if (feature === 'render') {
+    if (['beautify', 'render'].includes(feature)) {
       if (!config.imageBaseUrl || !config.imageModel || !config.imageApiKey) {
         throw new Error('请先在“API Key 配置”中填写并应用至少一个生图 API Key。')
       }
-      const generated = await generateRenderImages({ prompt, files, config })
+      const generated = await generateRenderImages({ feature, prompt, files, config })
       return {
         id: `${feature}-${Date.now()}`,
         feature,
@@ -658,7 +703,7 @@ export async function generateWithApi({ feature, prompt, files = [], options = {
     }
   }
 
-  const demoReference = feature === 'render' ? files.find((file) => file.type?.startsWith('image/')) : null
+  const demoReference = ['beautify', 'render'].includes(feature) ? files.find((file) => file.type?.startsWith('image/')) : null
   const demoOriginalImageUrl = demoReference ? await fileToDataUrl(demoReference, 15) : undefined
   await new Promise((resolve) => window.setTimeout(resolve, 950))
   return {
