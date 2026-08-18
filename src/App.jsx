@@ -112,6 +112,9 @@ export default function App() {
       return Boolean(config.enabled && config.llmApiKey && hasVerifiedImage)
     } catch { return false }
   })
+  const currentUserName = session?.user?.user_metadata?.display_name
+    || session?.user?.user_metadata?.username
+    || (session ? internalAccountUsername : '方案一组')
 
   useEffect(() => {
     const onHashChange = () => setRoute(getInitialRoute())
@@ -259,12 +262,13 @@ export default function App() {
         apiEnabled={session ? managedModels.languageReady && managedModels.imageModes.length > 0 : apiEnabled}
         apiKeyCount={session ? (managedModels.languageReady ? 1 : 0) + managedModels.imageModes.length : apiEnabled ? 1 + imageModes.length : 0}
         session={session}
+        userName={currentUserName}
         syncState={syncState}
       />
       <main className="main-shell">
         <Topbar route={route} onMenu={() => setMobileNavOpen(true)} onNavigate={navigate} onDialog={setDialog} />
         <div className="page-shell">
-          {route === 'home' && <HomeView onNavigate={navigate} onDialog={setDialog} memos={memos} onAddMemo={addWorkspaceMemo} onUpdateMemo={updateWorkspaceMemo} persistent={Boolean(session)} />}
+          {route === 'home' && <HomeView userName={currentUserName} onNavigate={navigate} onDialog={setDialog} memos={memos} onAddMemo={addWorkspaceMemo} onUpdateMemo={updateWorkspaceMemo} persistent={Boolean(session)} />}
           {features.map((feature) => (
             <div hidden={route !== feature.id} key={feature.id}>
               <FeatureWorkspace
@@ -291,7 +295,7 @@ export default function App() {
   )
 }
 
-function Sidebar({ route, open, onNavigate, onClose, onApiConfig, onProfile, apiEnabled, apiKeyCount, session, syncState }) {
+function Sidebar({ route, open, onNavigate, onClose, onApiConfig, onProfile, apiEnabled, apiKeyCount, session, userName, syncState }) {
   return (
     <>
       <button className={`nav-scrim ${open ? 'is-open' : ''}`} aria-label="关闭导航" onClick={onClose} />
@@ -343,7 +347,7 @@ function Sidebar({ route, open, onNavigate, onClose, onApiConfig, onProfile, api
           </button>
           <button className="profile-row" type="button" onClick={onProfile}>
             <span className="avatar"><UserRound /></span>
-            <span><strong>{session ? internalAccountUsername : '方案一组'}</strong><small>{session ? '内部账户 · 云端同步' : '访客演示 · 信息脱敏'}</small></span>
+            <span><strong>{userName}</strong><small>{session ? '内部账户 · 云端同步' : '访客演示 · 信息脱敏'}</small></span>
             <MoreHorizontal />
           </button>
         </div>
@@ -373,13 +377,13 @@ function Topbar({ route, onMenu, onNavigate, onDialog }) {
   )
 }
 
-function HomeView({ onNavigate, onDialog, memos, onAddMemo, onUpdateMemo, persistent }) {
+function HomeView({ userName, onNavigate, onDialog, memos, onAddMemo, onUpdateMemo, persistent }) {
   return (
     <div className="home-view enter-view">
       <section className="home-hero">
         <div className="hero-copy">
           <span className="eyebrow"><span /> MONDAY · 17 AUG</span>
-          <h1>早上好，<br />今天从哪一步开始？</h1>
+          <h1><span className="hero-user-name">{userName}，</span><br />今天从哪一步开始？</h1>
           <p>让 AI 处理重复表达，把判断力留给真正的设计问题。</p>
           <div className="hero-actions">
             <button className="button button-primary" onClick={() => onNavigate('inspiration')}>开始新任务 <ArrowRight /></button>
