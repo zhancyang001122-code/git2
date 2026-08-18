@@ -134,7 +134,10 @@ export async function signInInternalAccount(username, password) {
 
 export async function signOutInternalAccount() {
   const client = requireClient()
-  unwrap(await client.auth.signOut())
+  // Multiple interviewers may use the shared internal account at the same
+  // time. A global sign-out would revoke every device session; local scope
+  // only clears the browser that requested the logout.
+  unwrap(await client.auth.signOut({ scope: 'local' }))
 }
 
 export async function loadInternalWorkspace() {
