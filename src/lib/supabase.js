@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { prepareImageForStorage, storedImageName } from './asset-image.js'
 import { waitForImageTask } from './async-image-task.js'
 import { clearInvalidBrowserSession, validatedBrowserSession } from './session.js'
 
@@ -170,12 +171,6 @@ export async function updateMemo(id, content) {
   return mapMemo(row)
 }
 
-function extensionForBlob(blob) {
-  if (blob.type === 'image/jpeg') return 'jpg'
-  if (blob.type === 'image/webp') return 'webp'
-  return 'png'
-}
-
 async function imageUrlToBlob(imageUrl) {
   const response = await fetch(imageUrl)
   if (!response.ok) throw new Error(`生成图读取失败（${response.status}）`)
@@ -196,9 +191,11 @@ export async function persistAsset(asset) {
     const artifacts = []
     for (const [index, artifact] of (asset.artifacts || []).entries()) {
       if (!artifact.imageUrl) continue
-      const blob = await imageUrlToBlob(artifact.imageUrl)
+      const sourceBlob = await imageUrlToBlob(artifact.imageUrl)
+      const blob = await prepareImageForStorage(sourceBlob)
       const baseName = safeFileName(artifact.name || `generated-${index + 1}`)
-      const objectPath = `${user.id}/${packageId}/${baseName.replace(/\.[^.]+$/, '')}.${extensionForBlob(blob)}`
+      const storedName = storedImageName(baseName, blob.type)
+      const objectPath = `${user.id}/${packageId}/${storedName}`
       unwrap(await client.storage.from('user-assets').upload(objectPath, blob, {
         contentType: blob.type || 'image/png',
         upsert: false,
@@ -206,7 +203,7 @@ export async function persistAsset(asset) {
       uploadedPaths.push(objectPath)
       artifacts.push({
         id: artifact.id || index + 1,
-        name: artifact.name || `generated-${index + 1}.${extensionForBlob(blob)}`,
+        name: storedName,
         title: artifact.title || '生成图像',
         meta: artifact.meta || 'ArchFlow 真实生成',
         storagePath: objectPath,
