@@ -72,7 +72,7 @@ function imageConfig(slot: 'image1' | 'image2'): ImageConfig {
       : secondImageModel(),
     apiKey: env(`${prefix}_API_KEY`) || (slot === 'image1'
       ? env('生图api 4k')
-      : env('GEMINI_API_KEY') || env('GOOGLE_API_KEY')),
+      : env('GEMINI_API_KEY') || env('GOOGLE_API_KEY') || env('gemini香蕉')),
     protocol: env(`${prefix}_PROTOCOL`) || (slot === 'image1' ? 'auto' : 'gemini'),
     size: env(`${prefix}_SIZE`) || '4K',
     quality: env(`${prefix}_QUALITY`) || 'high',
