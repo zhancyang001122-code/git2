@@ -178,7 +178,7 @@ export const builtInModels = Object.freeze({
     label: '生图大模型',
     baseUrl: presetEnv.VITE_IMAGE_BASE_URL || 'https://api.openai.com/v1',
     model: presetEnv.VITE_IMAGE_MODEL || 'gpt-image-2',
-    size: presetEnv.VITE_IMAGE_SIZE || '1536x1024',
+    size: presetEnv.VITE_IMAGE_SIZE || '4K',
   }),
 })
 
@@ -285,6 +285,11 @@ function maxGeminiImageSize(model) {
   return /gemini-3(?:\.\d+)?-(?:flash|pro)-image/i.test(model) ? '4K' : ''
 }
 
+function geminiImageSize(requestedSize, model) {
+  const configuredSize = String(requestedSize || '').toUpperCase()
+  return /^(?:1K|2K|4K)$/.test(configuredSize) ? configuredSize : maxGeminiImageSize(model) || '4K'
+}
+
 export async function checkModelConnection(kind, values, { timeoutMs = 12000 } = {}) {
   const apiKey = String(values.apiKey || '').trim()
   const connection = resolveModelConnection(kind, values)
@@ -384,6 +389,12 @@ export function getConfiguredImageModes() {
         label: `生图 API ${slot.slotNumber}`,
         providerLabel: slot.connection.providerLabel,
         model: slot.connection.model,
+        maxSize: '4K',
+        supportsCustomSize: !(
+          slot.connection.protocol === 'gemini-generate'
+          || slot.connection.protocol === 'newapi-gemini'
+          || (slot.connection.protocol === 'newapi-auto' && isGeminiImageModel(slot.connection.model))
+        ),
       }))
   } catch {
     return []
@@ -588,8 +599,8 @@ async function generateRenderImages({ feature, prompt, files, config }) {
     const base64Image = originalImageUrl.split(',')[1]
     const isNativeGoogle = config.imageProtocol === 'gemini-generate'
     const geminiBaseUrl = isNativeGoogle ? baseUrl : `${newApiRoot(baseUrl)}/v1beta`
-    const imageSize = maxGeminiImageSize(config.imageModel)
-    const imageConfig = { aspectRatio: feature === 'beautify' ? '4:3' : '16:9' }
+    const imageSize = geminiImageSize(config.imageSize, config.imageModel)
+    const imageConfig = { aspectRatio: config.imageAspectRatio || (feature === 'beautify' ? '4:3' : '16:9') }
     if (imageSize) imageConfig.imageSize = imageSize
     const response = await fetch(`${geminiBaseUrl}/models/${encodeURIComponent(config.imageModel)}:generateContent`, {
       method: 'POST',
@@ -664,6 +675,8 @@ async function generateRenderImages({ feature, prompt, files, config }) {
 
 export async function generateWithApi({ feature, prompt, files = [], options = {} }) {
   const config = readConfig(options.imageSlot)
+  if (options.imageSize) config.imageSize = options.imageSize
+  if (options.imageAspectRatio) config.imageAspectRatio = options.imageAspectRatio
   const isLiveFeature = liveFeatureIds.includes(feature)
 
   if (config.enabled && isLiveFeature) {
