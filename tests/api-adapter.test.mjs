@@ -101,11 +101,12 @@ test('AI 渲染使用单张图生图接口并返回原图对比数据', async ()
   }
 
   const image = new File([new Uint8Array([137, 80, 78, 71])], 'white-model.png', { type: 'image/png' })
-  const result = await generateWithApi({ feature: 'render', prompt: '蓝调时刻', files: [image] })
+  const result = await generateWithApi({ feature: 'render', prompt: '蓝调时刻', files: [image], options: { imageSize: '3840x2160', imageAspectRatio: '16:9' } })
   assert.equal(request.url, 'https://img.yunfei.best/v1/images/edits')
   assert.equal(request.options.body.get('model'), 'gpt-image-2')
   assert.equal(request.options.body.get('n'), '1')
   assert.equal(request.options.body.get('response_format'), 'b64_json')
+  assert.equal(request.options.body.get('size'), '3840x2160')
   assert.equal(request.options.body.get('quality'), 'high')
   assert.equal(request.options.body.get('output_format'), 'png')
   assert.match(request.options.body.get('prompt'), /严格保持建筑轮廓、体量层级、层数/)
@@ -180,10 +181,12 @@ test('Gemini 生图协议支持参考图输入与图片响应', async () => {
   }
 
   const image = new File([new Uint8Array([137, 80, 78, 71])], 'reference.png', { type: 'image/png' })
-  const result = await generateWithApi({ feature: 'render', prompt: '暖色夜景', files: [image] })
+  const result = await generateWithApi({ feature: 'render', prompt: '暖色夜景', files: [image], options: { imageSize: '2880x3840', imageAspectRatio: '3:4' } })
   assert.equal(request.url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent')
   assert.equal(request.options.headers['x-goog-api-key'], 'test-image-key')
-  assert.equal(JSON.parse(request.options.body).generationConfig.imageConfig.imageSize, '4K')
+  const imageConfig = JSON.parse(request.options.body).generationConfig.imageConfig
+  assert.equal(imageConfig.imageSize, '4K')
+  assert.equal(imageConfig.aspectRatio, '3:4')
   assert.match(result.images[0].imageUrl, /^data:image\/png;base64,/)
 })
 

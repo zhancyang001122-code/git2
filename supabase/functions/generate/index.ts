@@ -56,7 +56,7 @@ function imageConfig(slot: 'image1' | 'image2'): ImageConfig {
     model: env(`${prefix}_MODEL`) || (slot === 'image1' ? 'gpt-image-2' : ''),
     apiKey: env(`${prefix}_API_KEY`) || (slot === 'image1' ? env('生图api 4k') : ''),
     protocol: env(`${prefix}_PROTOCOL`) || 'auto',
-    size: env(`${prefix}_SIZE`) || '1536x1024',
+    size: env(`${prefix}_SIZE`) || '4K',
     quality: env(`${prefix}_QUALITY`) || 'high',
   }
 }
@@ -103,12 +103,12 @@ async function checkLanguageConnection(config: ReturnType<typeof languageConfig>
 async function checkImageConnection(config: ImageConfig) {
   if (!isReady(config)) return false
   try {
-    const useGemini = config.protocol === 'gemini' || (config.protocol === 'auto' && looksLikeGemini(config.model))
-    const endpoint = useGemini
+    const useNativeGeminiListing = config.protocol === 'gemini'
+    const endpoint = useNativeGeminiListing
       ? `${rootWithoutApiVersion(config.baseUrl)}/v1beta/models`
       : `${rootWithoutApiVersion(config.baseUrl)}/v1/models`
     const response = await fetch(endpoint, {
-      headers: useGemini
+      headers: useNativeGeminiListing
         ? { Authorization: `Bearer ${config.apiKey}`, 'x-goog-api-key': config.apiKey }
         : { Authorization: `Bearer ${config.apiKey}` },
     })
@@ -136,7 +136,16 @@ async function capabilities() {
   return {
     languageReady,
     languageModel: languageReady ? llm.model : null,
-    imageModes: images.map(({ id, label, model }) => ({ id, label, model })),
+    imageModes: images.map((config) => {
+      const usesGeminiSizing = config.protocol === 'gemini' || (config.protocol === 'auto' && looksLikeGemini(config.model))
+      return {
+        id: config.id,
+        label: config.label,
+        model: config.model,
+        maxSize: '4K',
+        supportsCustomSize: !usesGeminiSizing,
+      }
+    }),
   }
 }
 
@@ -324,6 +333,30 @@ function maxGeminiImageSize(model: string) {
   return /gemini-3(?:\.\d+)?-(?:flash|pro)-image/i.test(model) ? '4K' : ''
 }
 
+function geminiImageSize(config: ImageConfig) {
+  const configuredSize = config.size.toUpperCase()
+  return /^(?:1K|2K|4K)$/.test(configuredSize) ? configuredSize : maxGeminiImageSize(config.model) || '4K'
+}
+
+function requestedImageSize(value: unknown, fallback: string) {
+  const requested = String(value || fallback || '4K').trim().toUpperCase()
+  if (/^(?:1K|2K|4K|AUTO)$/.test(requested)) return requested
+  const match = requested.match(/^(\d{2,4})X(\d{2,4})$/)
+  if (!match) throw new HttpError('图幅尺寸格式无效，请使用“宽x高”，例如 3840x2160。', 400)
+  const width = Number(match[1])
+  const height = Number(match[2])
+  if (width < 64 || height < 64 || width > 4096 || height > 4096) {
+    throw new HttpError('自定义图幅的宽和高必须在 64 到 4096 像素之间。', 400)
+  }
+  return `${width}x${height}`
+}
+
+function requestedAspectRatio(value: unknown, fallback: string) {
+  const requested = String(value || fallback).trim()
+  const supported = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '4:5', '5:4', '21:9'])
+  return supported.has(requested) ? requested : fallback
+}
+
 async function generateImage(body: Record<string, unknown>) {
   const feature = body.feature === 'beautify' ? 'beautify' : 'render'
   const slot = body.imageSlot === 'image2' ? 'image2' : 'image1'
@@ -334,13 +367,15 @@ async function generateImage(body: Record<string, unknown>) {
   const originalImageUrl = imageDataUrl(attachment)
   const prompt = imagePrompt(feature, String(body.prompt || ''))
   const useGemini = config.protocol === 'gemini' || (config.protocol === 'auto' && looksLikeGemini(config.model))
+  const imageSize = requestedImageSize(body.imageSize, config.size)
+  const aspectRatio = requestedAspectRatio(body.imageAspectRatio, feature === 'beautify' ? '4:3' : '16:9')
   let imageUrl = ''
 
   if (useGemini) {
     const base = rootWithoutApiVersion(config.baseUrl)
-    const imageSize = maxGeminiImageSize(config.model)
-    const imageConfigPayload: Record<string, string> = { aspectRatio: feature === 'beautify' ? '4:3' : '16:9' }
-    if (imageSize) imageConfigPayload.imageSize = imageSize
+    const geminiSize = geminiImageSize(config)
+    const imageConfigPayload: Record<string, string> = { aspectRatio }
+    if (geminiSize) imageConfigPayload.imageSize = geminiSize
     const response = await fetch(`${base}/v1beta/models/${encodeURIComponent(config.model)}:generateContent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
@@ -372,7 +407,7 @@ async function generateImage(body: Record<string, unknown>) {
     form.append('prompt', prompt)
     form.append('image', new Blob([bytes], { type: attachment.mimeType }), attachment.name || 'reference.png')
     form.append('n', '1')
-    form.append('size', config.size)
+    form.append('size', imageSize)
     form.append('quality', config.quality)
     form.append('output_format', 'png')
     form.append('output_compression', '100')
@@ -409,7 +444,7 @@ async function generateImage(body: Record<string, unknown>) {
     mode: 'managed-image-api',
     model: config.model,
     originalImageUrl,
-    images: [{ id: 1, title: feature === 'beautify' ? '真实生成 · 图纸美化' : '真实生成 · 主视角', meta: `${config.model} · ${useGemini ? maxGeminiImageSize(config.model) || '模型原生最高分辨率' : `${config.size} · ${config.quality.toUpperCase()}`}`, imageUrl }],
+    images: [{ id: 1, title: feature === 'beautify' ? '真实生成 · 图纸美化' : '真实生成 · 主视角', meta: `${config.model} · ${useGemini ? `${aspectRatio} · ${geminiImageSize(config) || '模型原生最高分辨率'}` : `${imageSize} · ${config.quality.toUpperCase()}`}`, imageUrl }],
   }
 }
 

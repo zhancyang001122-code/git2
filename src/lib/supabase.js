@@ -278,6 +278,8 @@ export async function generateWithCloudApi({ feature, prompt, files = [], option
       fileNames: files.map((file) => file.name),
       attachments,
       imageSlot: options.imageSlot || 'image1',
+      imageSize: options.imageSize,
+      imageAspectRatio: options.imageAspectRatio,
     },
   })
   if (error) throw new Error(error.message || '云端生成服务调用失败。')

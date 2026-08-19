@@ -55,9 +55,17 @@ import {
   subscribeToAuth,
   updateMemo,
 } from './lib/supabase.js'
+import { formatElapsedTime } from './lib/time.js'
 
 const validRoutes = new Set(navItems.map((item) => item.id))
 const sidebarNavItems = navItems.filter((item) => item.id !== 'home')
+const imageFrameOptions = [
+  { id: '16:9', label: '横图 16:9 · 3840×2160', size: '3840x2160', aspectRatio: '16:9' },
+  { id: '4:3', label: '横图 4:3 · 3840×2880', size: '3840x2880', aspectRatio: '4:3' },
+  { id: '1:1', label: '方图 1:1 · 3840×3840', size: '3840x3840', aspectRatio: '1:1' },
+  { id: '3:4', label: '竖图 3:4 · 2880×3840', size: '2880x3840', aspectRatio: '3:4' },
+  { id: '9:16', label: '竖图 9:16 · 2160×3840', size: '2160x3840', aspectRatio: '9:16' },
+]
 const demoMemos = [
   { id: 2, text: '周五前完成 A / B / C 方案比选，准备甲方沟通版。', time: '今天 10:20' },
   { id: 1, text: '确认滨水入口雨棚净高，与结构顾问同步 4.8m 控制线。', time: '今天 09:35' },
@@ -502,14 +510,21 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
   const [files, setFiles] = useState([])
   const [dragActive, setDragActive] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [result, setResult] = useState(null)
   const [selectedScheme, setSelectedScheme] = useState(null)
   const [imageMode, setImageMode] = useState(imageModes[0]?.id || 'demo')
+  const [imageFrame, setImageFrame] = useState(feature.id === 'beautify' ? '4:3' : '16:9')
+  const [customImageWidth, setCustomImageWidth] = useState('3840')
+  const [customImageHeight, setCustomImageHeight] = useState(feature.id === 'beautify' ? '2880' : '2160')
   const outputRef = useRef(null)
   const dragDepth = useRef(0)
   const activeRef = useRef(active)
   const scrollOnReveal = useRef(false)
   const usesImageModel = ['beautify', 'render'].includes(feature.id)
+  const renderImageModes = imageModes.length ? imageModes : [{ id: 'demo', label: '本地演示', model: '未连接 API', maxSize: '4K', supportsCustomSize: true }]
+  const activeImageMode = renderImageModes.find((mode) => mode.id === imageMode) || renderImageModes[0]
+  const activeFrame = imageFrameOptions.find((frame) => frame.id === imageFrame) || imageFrameOptions[0]
 
   useEffect(() => {
     activeRef.current = active
@@ -523,6 +538,21 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
     const nextModes = imageModes.length ? imageModes : [{ id: 'demo' }]
     if (!nextModes.some((mode) => mode.id === imageMode)) setImageMode(nextModes[0].id)
   }, [imageMode, imageModes])
+
+  useEffect(() => {
+    if (!activeImageMode?.supportsCustomSize && imageFrame === 'custom') {
+      setImageFrame(feature.id === 'beautify' ? '4:3' : '16:9')
+    }
+  }, [activeImageMode?.supportsCustomSize, feature.id, imageFrame])
+
+  useEffect(() => {
+    if (!loading || !usesImageModel) return undefined
+    const startedAt = Date.now()
+    const updateElapsedTime = () => setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000))
+    updateElapsedTime()
+    const timer = window.setInterval(updateElapsedTime, 1000)
+    return () => window.clearInterval(timer)
+  }, [loading, usesImageModel])
 
   const useChip = (chip) => {
     setPrompt((current) => current ? `${current}，${chip}` : chip)
@@ -600,6 +630,15 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
       onToast({ title: '请先上传参考图', detail: feature.id === 'beautify' ? 'AI 图纸美化需要一张原始图纸，生成后才能进行滑杆对比。' : 'AI 渲染需要一张白模或原始效果图，生成后才能进行滑杆对比。' })
       return
     }
+    const customWidth = Number(customImageWidth)
+    const customHeight = Number(customImageHeight)
+    if (usesImageModel && imageFrame === 'custom' && (!Number.isInteger(customWidth) || !Number.isInteger(customHeight) || customWidth < 64 || customHeight < 64 || customWidth > 4096 || customHeight > 4096)) {
+      onToast({ title: '自定义图幅无效', detail: '宽和高请输入 64–4096 之间的整数像素值。' })
+      return
+    }
+    const requestedImageSize = imageFrame === 'custom' ? `${customWidth}x${customHeight}` : activeFrame.size
+    const requestedAspectRatio = imageFrame === 'custom' ? undefined : activeFrame.aspectRatio
+    setElapsedSeconds(0)
     setLoading(true)
     setResult(null)
     try {
@@ -608,7 +647,11 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
         feature: feature.id,
         prompt,
         files,
-        options: { imageSlot: imageMode === 'demo' ? undefined : imageMode },
+        options: {
+          imageSlot: imageMode === 'demo' ? undefined : imageMode,
+          imageSize: requestedImageSize,
+          imageAspectRatio: requestedAspectRatio,
+        },
       })
       setResult(response)
       if (managed) {
@@ -643,8 +686,6 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
     }
     onSave(feature, prompt, result)
   }
-
-  const renderImageModes = imageModes.length ? imageModes : [{ id: 'demo', label: '本地演示', model: '未连接 API' }]
 
   return (
     <div className="feature-view enter-view">
@@ -706,9 +747,11 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
           <div className="composer-footer">
             <span><Cloud /> {managed ? '项目资料仍为临时附件 · 生成记录登录后云端保留' : '当前标签页内存 · 切换栏目不中断，刷新后释放'}</span>
             <div className="composer-actions">
-              {usesImageModel && <label className={`image-mode-picker ${renderImageModes.length === 1 ? 'is-locked' : ''}`}><span><ImagePlus /> 生图模式</span><select aria-label="选择生图 API" value={imageMode} onChange={(event) => setImageMode(event.target.value)} disabled={loading || renderImageModes.length === 1}>{renderImageModes.map((mode) => <option value={mode.id} key={mode.id}>{mode.label} · {mode.model}</option>)}</select></label>}
+              {usesImageModel && <label className={`image-mode-picker ${renderImageModes.length === 1 ? 'is-locked' : ''}`}><span><ImagePlus /> 生图模型</span><select aria-label="选择生图模型" value={imageMode} onChange={(event) => setImageMode(event.target.value)} disabled={loading || renderImageModes.length === 1}>{renderImageModes.map((mode) => <option value={mode.id} key={mode.id}>{mode.label} · {mode.model}{mode.maxSize ? ` · 最高 ${mode.maxSize}` : ''}</option>)}</select></label>}
+              {usesImageModel && <label className="image-mode-picker image-frame-picker"><span><SlidersHorizontal /> 输出图幅</span><select aria-label="选择输出图幅" value={imageFrame} onChange={(event) => setImageFrame(event.target.value)} disabled={loading}>{imageFrameOptions.map((frame) => <option value={frame.id} key={frame.id}>{frame.label}</option>)}{activeImageMode?.supportsCustomSize && <option value="custom">自定义宽 × 高</option>}</select></label>}
+              {usesImageModel && imageFrame === 'custom' && activeImageMode?.supportsCustomSize && <div className="custom-image-size" aria-label="自定义输出图幅"><label><span>宽</span><input type="number" min="64" max="4096" step="1" inputMode="numeric" value={customImageWidth} onChange={(event) => setCustomImageWidth(event.target.value)} disabled={loading} /></label><b>×</b><label><span>高</span><input type="number" min="64" max="4096" step="1" inputMode="numeric" value={customImageHeight} onChange={(event) => setCustomImageHeight(event.target.value)} disabled={loading} /></label></div>}
               <button className="button button-primary generate-button" onClick={handleGenerate} disabled={loading}>
-                {loading ? <><LoaderCircle className="spin" /> 正在分析</> : <>生成专业结果 <WandSparkles /></>}
+                {loading ? <><LoaderCircle className="spin" /> {usesImageModel ? <>生成中 <span className="button-timer">{formatElapsedTime(elapsedSeconds)}</span></> : '正在分析'}</> : <>生成专业结果 <WandSparkles /></>}
               </button>
             </div>
           </div>
@@ -726,7 +769,7 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
       </section>
 
       <section className="output-anchor" ref={outputRef}>
-        {loading && <OutputSkeleton feature={feature} />}
+        {loading && <OutputSkeleton feature={feature} elapsedSeconds={elapsedSeconds} imageMode={activeImageMode} />}
         {result && (
           <OutputPanel
             feature={feature}
@@ -768,10 +811,15 @@ function FilePreviewList({ files, onRemove }) {
   )
 }
 
-function OutputSkeleton({ feature }) {
+function OutputSkeleton({ feature, elapsedSeconds = 0, imageMode = null }) {
+  const usesImageModel = ['beautify', 'render'].includes(feature.id)
   return (
-    <div className="output-panel glass-panel loading-panel" aria-live="polite">
-      <div className="loading-head"><span className="loading-orbit"><feature.icon /></span><div><strong>正在生成 {feature.nav.replace('AI ', '')}</strong><small>识别输入 · 匹配专业策略 · 组织交付结构</small></div></div>
+    <div className="output-panel glass-panel loading-panel" aria-live="polite" aria-busy="true">
+      <div className="loading-head">
+        <span className="loading-orbit"><feature.icon /></span>
+        <div><strong>正在生成 {feature.nav.replace('AI ', '')}</strong><small>{usesImageModel ? `正在调用 ${imageMode?.label || '生图服务'} · ${imageMode?.model || '等待模型响应'}` : '识别输入 · 匹配专业策略 · 组织交付结构'}</small></div>
+        {usesImageModel && <time className="loading-elapsed" dateTime={`PT${elapsedSeconds}S`} aria-live="off"><span>已等待</span><b>{formatElapsedTime(elapsedSeconds)}</b></time>}
+      </div>
       <div className="skeleton-grid"><i /><i /><i /></div>
     </div>
   )
@@ -1243,7 +1291,7 @@ function ManagedApiDialog({ closeRef, onClose, managedModels }) {
         <span className="dialog-symbol is-info"><BrainCircuit /></span><span className="eyebrow">SERVER MANAGED MODELS</span><h2 id="managed-api-title">内部账号模型配置</h2><p>密钥只保存在 Supabase Edge Function Secrets，不会显示或写入浏览器。</p>
         <div className="managed-model-list">
           <article className={managedModels.languageReady ? 'is-ready' : 'is-missing'}><span><BrainCircuit /></span><p><strong>语言大模型</strong><small>{managedModels.languageReady ? managedModels.languageModel : '等待管理员配置'}</small></p><em>{managedModels.languageReady ? <><Check /> 已连接</> : <><Info /> 未配置</>}</em></article>
-          {managedModels.imageModes.map((mode, index) => <article className="is-ready" key={mode.id}><span><ImagePlus /></span><p><strong>生图大模型 {index + 1}</strong><small>{mode.label} · {mode.model}</small></p><em><Check /> 已连接</em></article>)}
+          {managedModels.imageModes.map((mode, index) => <article className="is-ready" key={mode.id}><span><ImagePlus /></span><p><strong>生图大模型 {index + 1}</strong><small>{mode.label} · {mode.model}{mode.maxSize ? ` · 最高 ${mode.maxSize}` : ''}</small></p><em><Check /> 已连接</em></article>)}
           {!managedModels.imageModes.length && <article className="is-missing"><span><ImagePlus /></span><p><strong>生图大模型</strong><small>等待管理员配置</small></p><em><Info /> 未配置</em></article>}
         </div>
         <div className="privacy-note"><BadgeCheck /><p><strong>{modelCount} 个服务端模型可用</strong><small>内部账号无需自行填写 API Key；访客演示的本地 Key 配置与此处完全分开。</small></p></div>

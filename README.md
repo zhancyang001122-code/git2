@@ -56,6 +56,22 @@ pnpm build
 - AI 渲染要求上传一张白模或原始效果图：OpenAI 系模型请求 `/images/edits`，第三方 Gemini 系模型自动切换到 `/v1beta/models/{model}:generateContent`，并只返回一张图用于前后对比；
 - 其余三个模块保持高质量本地演示，不伪装成真实 API 结果。
 
+### 内部账号第二生图 API
+
+`内部账户1` 的模型密钥由 Supabase Edge Function 托管，不需要也不应填写到访客的“API Key 配置”中。进入 Supabase Dashboard 的 **Edge Functions → Secrets**，为第二个生图服务添加以下变量：
+
+```text
+ARCHFLOW_IMAGE_2_LABEL=界面显示名称
+ARCHFLOW_IMAGE_2_BASE_URL=服务根地址或兼容接口地址
+ARCHFLOW_IMAGE_2_MODEL=准确的模型 ID
+ARCHFLOW_IMAGE_2_API_KEY=真实 API Key
+ARCHFLOW_IMAGE_2_PROTOCOL=auto
+ARCHFLOW_IMAGE_2_SIZE=4K
+ARCHFLOW_IMAGE_2_QUALITY=high
+```
+
+OpenAI 兼容的 `/images/edits` 服务使用 `auto`；原生 Gemini `generateContent` 服务可使用 `gemini`。`auto` 模式通过 `/v1/models` 检查第三方服务，再根据模型 ID 自动选择 `/v1/images/edits` 或 `/v1beta/models/{model}:generateContent` 生成。两个内部生图槽位都以 `4K` 作为最高输出等级，但不强制每次固定为 4K：第一 API 可在生成前选择常用横图、竖图、方图，或输入 64–4096 像素范围内的自定义宽高；Gemini 类 API 则按用户选择的图幅比例生成，并显式请求最高 `4K` 等级。`ARCHFLOW_IMAGE_*_SIZE` 只作为未传入本次图幅时的服务端默认值。保存 Secrets 后无需重新部署 Edge Function，刷新 ArchFlow 或重新登录内部账号即可重新读取可用模型。只有通过服务端模型连通性检查的 API 才会出现在“生图模型”选择器中；`ARCHFLOW_IMAGE_2_MODEL` 必须填写 `/v1/models` 返回的准确模型 ID，不能只填“Gemini 香蕉”等昵称。生成期间界面显示所选服务、模型、最高分辨率及从 `00:00` 开始累计的已等待时间。
+
 API Key 仅写入 `sessionStorage`，关闭标签页后清除，不会进入源码、构建产物或 Git。浏览器直连接口仍要求网络可访问服务商并允许 CORS；正式产品必须改为服务端代理。
 
 上传文件只存在当前标签页的 React 内存中，切换栏目不会清除，刷新或关闭标签页后释放；启用真实 API 后，图片会发送给用户选择的第三方模型服务，但 ArchFlow POC 不上传到自己的服务器。AI 渲染结果点击“保存到资产”后，会连同真实生成图一起保留在当前标签页内存，可在“我的资产 → 查看详情”中预览和再次下载；刷新或关闭后仍会消失。跨设备资产、图纸解析、建模、长期文件存储和真实导出仍属于后端能力边界。完整建议见 [`docs/TECHNICAL_ARCHITECTURE.md`](docs/TECHNICAL_ARCHITECTURE.md)。
