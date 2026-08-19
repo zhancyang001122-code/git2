@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { waitForImageTask } from './async-image-task.js'
+import { clearInvalidBrowserSession, validatedBrowserSession } from './session.js'
 
 // These values are public browser configuration, not server secrets. Keeping a
 // checked-in fallback prevents a missing Vercel/GitHub build variable from
@@ -109,15 +110,18 @@ async function currentUser() {
 
 export async function getCurrentSession() {
   if (!supabase) return null
-  const { data, error } = await supabase.auth.getSession()
-  if (error) throw error
-  return data.session
+  return validatedBrowserSession(supabase.auth)
 }
 
 export function subscribeToAuth(callback) {
   if (!supabase) return () => {}
-  const { data } = supabase.auth.onAuthStateChange((_event, session) => callback(session))
+  const { data } = supabase.auth.onAuthStateChange((event, session) => callback(session, event))
   return () => data.subscription.unsubscribe()
+}
+
+export async function recoverInvalidSession() {
+  if (!supabase) return
+  await clearInvalidBrowserSession(supabase.auth)
 }
 
 export async function signInInternalAccount(username, password) {

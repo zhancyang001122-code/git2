@@ -50,12 +50,15 @@ import {
   loadInternalWorkspace,
   persistAsset,
   recordGeneration,
+  recoverInvalidSession,
   signInInternalAccount,
   signOutInternalAccount,
   subscribeToAuth,
   updateMemo,
 } from './lib/supabase.js'
 import { formatElapsedTime } from './lib/time.js'
+import { isInvalidSessionError } from './lib/session.js'
+import { loadWorkspaceAndCapabilities } from './lib/workspace-loader.js'
 
 const validRoutes = new Set(navItems.map((item) => item.id))
 const sidebarNavItems = navItems.filter((item) => item.id !== 'home')
@@ -136,8 +139,9 @@ export default function App() {
       .then((currentSession) => active && setSession(currentSession))
       .catch(() => active && setSession(null))
       .finally(() => active && setAuthReady(true))
-    const unsubscribe = subscribeToAuth((nextSession) => {
+    const unsubscribe = subscribeToAuth((nextSession, event) => {
       if (!active) return
+      if (event === 'INITIAL_SESSION') return
       setSession(nextSession)
       setAuthReady(true)
     })
@@ -159,17 +163,34 @@ export default function App() {
     }
 
     setSyncState('loading')
-    Promise.all([loadInternalWorkspace(), getCloudCapabilities()])
-      .then(([workspace, capabilities]) => {
+    loadWorkspaceAndCapabilities(loadInternalWorkspace, getCloudCapabilities)
+      .then(({ workspace, capabilities, capabilitiesError }) => {
         if (!active) return
         setAssets(workspace.assets)
         setMemos(workspace.memos)
-        setImageModes(capabilities.imageModes.length ? capabilities.imageModes : [{ id: 'image1', label: '内置生图 API 1', model: '等待服务端配置' }])
-        setManagedModels(capabilities)
+        if (capabilities) {
+          setImageModes(capabilities.imageModes.length ? capabilities.imageModes : [{ id: 'image1', label: '内置生图 API 1', model: '等待服务端配置' }])
+          setManagedModels(capabilities)
+        } else {
+          setImageModes([{ id: 'image1', label: '内置生图 API', model: '模型服务暂不可用' }])
+          setManagedModels({ languageReady: false, languageModel: '', imageModes: [] })
+          setToast({
+            title: '工作区已加载，模型服务暂不可用',
+            detail: capabilitiesError instanceof Error ? capabilitiesError.message : '请稍后刷新模型状态。',
+          })
+        }
         setSyncState('ready')
       })
-      .catch((error) => {
+      .catch(async (error) => {
         if (!active) return
+        if (isInvalidSessionError(error)) {
+          await recoverInvalidSession()
+          if (!active) return
+          setSession(null)
+          setSyncState('guest')
+          setToast({ title: '登录状态已失效', detail: '为保护云端数据，已安全退出。请重新登录内部账户。' })
+          return
+        }
         setAssets([])
         setMemos([])
         setSyncState('error')
