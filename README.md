@@ -70,6 +70,16 @@ ARCHFLOW_IMAGE_2_SIZE=4K
 ARCHFLOW_IMAGE_2_QUALITY=high
 ```
 
+也兼容 Gemini CLI 常用的 Secrets 名称：
+
+```text
+GOOGLE_GEMINI_BASE_URL=https://api.uselg.top
+GEMINI_MODEL=gemini-3-pro-image-preview
+GEMINI_API_KEY=真实 API Key
+```
+
+本项目需要可输出图片的模型。`gemini-3-pro-preview` 仅输出文本且已停用；如果只通过 `GEMINI_MODEL` 提供这个旧值，服务端会自动改用当前网关提供的 `gemini-3-pro-image-preview`（Nano Banana Pro）。如供应商返回其他准确的生图模型 ID，优先使用 `ARCHFLOW_IMAGE_2_MODEL` 或 `GEMINI_IMAGE_MODEL` 显式覆盖。
+
 OpenAI 兼容的 `/images/edits` 服务使用 `auto`；原生 Gemini `generateContent` 服务可使用 `gemini`。`auto` 模式通过 `/v1/models` 检查第三方服务，再根据模型 ID 自动选择 `/v1/images/edits` 或 `/v1beta/models/{model}:generateContent` 生成。两个内部生图槽位都以 `4K` 作为最高输出等级，但不强制每次固定为 4K：第一 API 可在生成前选择常用横图、竖图、方图，或输入 64–4096 像素范围内的自定义宽高；Gemini 类 API 则按用户选择的图幅比例生成，并显式请求最高 `4K` 等级。`ARCHFLOW_IMAGE_*_SIZE` 只作为未传入本次图幅时的服务端默认值。保存 Secrets 后无需重新部署 Edge Function，刷新 ArchFlow 或重新登录内部账号即可重新读取可用模型。只有通过服务端模型连通性检查的 API 才会出现在“生图模型”选择器中；`ARCHFLOW_IMAGE_2_MODEL` 必须填写 `/v1/models` 返回的准确模型 ID，不能只填“Gemini 香蕉”等昵称。生成期间界面显示所选服务、模型、最高分辨率及从 `00:00` 开始累计的已等待时间。
 
 API Key 仅写入 `sessionStorage`，关闭标签页后清除，不会进入源码、构建产物或 Git。浏览器直连接口仍要求网络可访问服务商并允许 CORS；正式产品必须改为服务端代理。
