@@ -38,6 +38,6 @@ ARCHFLOW_IMAGE_2_SIZE=4K
 
 第二路 Gemini 也兼容 `GOOGLE_GEMINI_BASE_URL`、`GEMINI_MODEL`、`GEMINI_IMAGE_MODEL`、`GEMINI_API_KEY` 和 `GOOGLE_API_KEY`；现有部署中的旧 Key 名称 `gemini香蕉` 也会被读取。当前网关使用 `gemini-3-pro-image-preview`；旧的 `gemini-3-pro-preview` 不支持图片输出，且已停用。
 
-`ARCHFLOW_IMAGE_*_PROTOCOL` 可设为 `openai`、`gemini` 或 `auto`。`auto` 通过 `/v1/models` 检查第三方服务，再根据模型名中是否包含 `gemini` 选择生成协议；`gemini` 则使用原生 `/v1beta/models` 列表。`ARCHFLOW_IMAGE_*_SIZE` 是没有传入本次输出图幅时的默认值；前端可为 OpenAI 兼容服务按次传入 64–4096 像素范围内的自定义宽高，Gemini 类服务则按次传入图幅比例并使用最高 `4K` 等级。
+`ARCHFLOW_IMAGE_*_PROTOCOL` 可设为 `openai`、`gemini` 或 `auto`。`auto` 通过 `/v1/models` 检查第三方服务，再根据模型名中是否包含 `gemini` 选择生成协议；`gemini` 则使用原生 `/v1beta/models` 列表。`ARCHFLOW_IMAGE_*_SIZE` 是没有传入本次输出图幅时的默认值；前端可为 OpenAI 兼容服务按次传入 64–4096 像素范围内的自定义宽高，Gemini 类服务则按次传入图幅比例并使用最高 `4K` 等级。FluxPort 网关对重型 4K 请求返回 `202 media_task`，`generate` 会向客户端签发当前用户专属的任务令牌，再由客户端分段调用 `image-task-status`，避免单次 Edge Function 请求超过 150 秒空闲超时。
 
 这些 Key 只能放在 Supabase Secrets 中，不能使用 `VITE_` 前缀，也不能提交到 Git。
