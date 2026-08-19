@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { waitForImageTask } from './async-image-task.js'
 
 // These values are public browser configuration, not server secrets. Keeping a
 // checked-in fallback prevents a missing Vercel/GitHub build variable from
@@ -266,25 +267,60 @@ function fileToAttachment(file) {
   })
 }
 
+async function cloudFunctionErrorMessage(error) {
+  try {
+    const context = error?.context
+    if (context && typeof context.clone === 'function') {
+      const payload = await context.clone().json()
+      if (payload?.error) return String(payload.error)
+    }
+  } catch {
+    // Fall back to the SDK error below when the response body is unavailable.
+  }
+  return String(error?.message || '云端生成服务调用失败。')
+}
+
+async function invokeGenerateFunction(client, body) {
+  const { data, error } = await client.functions.invoke('generate', { body })
+  if (error) throw new Error(await cloudFunctionErrorMessage(error))
+  if (data?.error) throw new Error(data.error)
+  return data
+}
+
 export async function generateWithCloudApi({ feature, prompt, files = [], options = {} }) {
   const client = requireClient()
   const imageFiles = files.filter((file) => file.type?.startsWith('image/')).slice(0, 1)
   const attachments = await Promise.all(imageFiles.map(fileToAttachment))
-  const { data, error } = await client.functions.invoke('generate', {
-    body: {
-      action: 'generate',
-      feature,
-      prompt,
-      fileNames: files.map((file) => file.name),
-      attachments,
-      imageSlot: options.imageSlot || 'image1',
-      imageSize: options.imageSize,
-      imageAspectRatio: options.imageAspectRatio,
-    },
-  })
-  if (error) throw new Error(error.message || '云端生成服务调用失败。')
-  if (data?.error) throw new Error(data.error)
-  return data
+  const imageSlot = options.imageSlot || 'image1'
+  const fileNames = files.map((file) => file.name)
+  const request = {
+    action: 'generate',
+    feature,
+    prompt,
+    fileNames,
+    attachments,
+    imageSlot,
+    imageSize: options.imageSize,
+    imageAspectRatio: options.imageAspectRatio,
+  }
+  const initialResult = await invokeGenerateFunction(client, request)
+  const result = await waitForImageTask(initialResult, (task) => invokeGenerateFunction(client, {
+    action: 'image-task-status',
+    feature,
+    prompt,
+    fileNames,
+    imageSlot,
+    imageAspectRatio: options.imageAspectRatio,
+    taskId: task.taskId,
+    taskToken: task.taskToken,
+  }))
+  if (result && !result.originalImageUrl && attachments[0]?.data) {
+    return {
+      ...result,
+      originalImageUrl: `data:${attachments[0].mimeType || 'image/png'};base64,${attachments[0].data}`,
+    }
+  }
+  return result
 }
 
 export async function getCloudCapabilities() {
