@@ -47,15 +47,33 @@ function languageConfig() {
   }
 }
 
+function secondImageModel() {
+  const explicitImageModel = env('ARCHFLOW_IMAGE_2_MODEL') || env('GEMINI_IMAGE_MODEL')
+  if (explicitImageModel) return explicitImageModel
+
+  const genericGeminiModel = env('GEMINI_MODEL')
+  // gemini-3-pro-preview was a text-output model and is no longer available.
+  // Keep common Gemini CLI environment names usable while selecting the
+  // image-capable Nano Banana Pro model required by this function.
+  if (!genericGeminiModel || genericGeminiModel === 'gemini-3-pro-preview') return 'gemini-3-pro-image-preview'
+  return genericGeminiModel
+}
+
 function imageConfig(slot: 'image1' | 'image2'): ImageConfig {
   const prefix = slot === 'image1' ? 'ARCHFLOW_IMAGE_1' : 'ARCHFLOW_IMAGE_2'
   return {
     id: slot,
-    label: env(`${prefix}_LABEL`) || (slot === 'image1' ? '第三方生图服务' : '内置生图 API 2'),
-    baseUrl: env(`${prefix}_BASE_URL`) || (slot === 'image1' ? 'https://img.yunfei.best' : ''),
-    model: env(`${prefix}_MODEL`) || (slot === 'image1' ? 'gpt-image-2' : ''),
-    apiKey: env(`${prefix}_API_KEY`) || (slot === 'image1' ? env('生图api 4k') : ''),
-    protocol: env(`${prefix}_PROTOCOL`) || 'auto',
+    label: env(`${prefix}_LABEL`) || (slot === 'image1' ? '第三方生图服务' : 'Gemini 香蕉'),
+    baseUrl: env(`${prefix}_BASE_URL`) || (slot === 'image1'
+      ? 'https://img.yunfei.best'
+      : env('GOOGLE_GEMINI_BASE_URL') || 'https://api.uselg.top'),
+    model: slot === 'image1'
+      ? env(`${prefix}_MODEL`) || 'gpt-image-2'
+      : secondImageModel(),
+    apiKey: env(`${prefix}_API_KEY`) || (slot === 'image1'
+      ? env('生图api 4k')
+      : env('GEMINI_API_KEY') || env('GOOGLE_API_KEY')),
+    protocol: env(`${prefix}_PROTOCOL`) || (slot === 'image1' ? 'auto' : 'gemini'),
     size: env(`${prefix}_SIZE`) || '4K',
     quality: env(`${prefix}_QUALITY`) || 'high',
   }
