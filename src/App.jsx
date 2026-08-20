@@ -65,7 +65,7 @@ import { loadWorkspaceAndCapabilities } from './lib/workspace-loader.js'
 const validRoutes = new Set(navItems.map((item) => item.id))
 const sidebarNavItems = navItems.filter((item) => item.id !== 'home')
 const imageFrameOptions = [
-  { id: 'original', label: '跟随原图比例 · 4K 长边', requiresCustomSize: true },
+  { id: 'original', label: '跟随原图比例 · 4K', requiresOriginalRatio: true },
   { id: '16:9', label: '横图 16:9 · 3840×2160', size: '3840x2160', aspectRatio: '16:9' },
   { id: '4:3', label: '横图 4:3 · 3840×2880', size: '3840x2880', aspectRatio: '4:3' },
   { id: '1:1', label: '方图 1:1 · 3840×3840', size: '3840x3840', aspectRatio: '1:1' },
@@ -548,7 +548,7 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
   const usesImageModel = ['beautify', 'render'].includes(feature.id)
   const renderImageModes = imageModes.length ? imageModes : [{ id: 'demo', label: '本地演示', model: '未连接 API', maxSize: '4K', supportsCustomSize: true, connected: false, connectionStatus: 'warning' }]
   const activeImageMode = renderImageModes.find((mode) => mode.id === imageMode) || renderImageModes[0]
-  const availableImageFrameOptions = imageFrameOptions.filter((frame) => !frame.requiresCustomSize || activeImageMode?.supportsCustomSize)
+  const availableImageFrameOptions = imageFrameOptions.filter((frame) => !frame.requiresOriginalRatio || activeImageMode?.supportsOriginalRatio !== false)
   const activeFrame = availableImageFrameOptions.find((frame) => frame.id === imageFrame) || availableImageFrameOptions[0]
 
   useEffect(() => {
@@ -565,10 +565,11 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
   }, [imageMode, imageModes])
 
   useEffect(() => {
-    if (!activeImageMode?.supportsCustomSize && ['custom', 'original'].includes(imageFrame)) {
+    if ((imageFrame === 'custom' && !activeImageMode?.supportsCustomSize)
+      || (imageFrame === 'original' && activeImageMode?.supportsOriginalRatio === false)) {
       setImageFrame(feature.id === 'beautify' ? '4:3' : '16:9')
     }
-  }, [activeImageMode?.supportsCustomSize, feature.id, imageFrame])
+  }, [activeImageMode?.supportsCustomSize, activeImageMode?.supportsOriginalRatio, feature.id, imageFrame])
 
   useEffect(() => {
     if (!loading || !usesImageModel) return undefined

@@ -24,6 +24,7 @@ type ImageConnection = {
   status: 'connected' | 'warning' | 'error' | 'not_configured'
   reason: string
   httpStatus?: number
+  availableModels?: string[]
 }
 
 class HttpError extends Error {
@@ -44,6 +45,10 @@ function json(data: unknown, status = 200) {
 
 function env(name: string) {
   return (Deno.env.get(name) || '').trim()
+}
+
+function readableLabel(value: string, fallback: string) {
+  return value && !value.includes('\uFFFD') ? value : fallback
 }
 
 function languageConfig() {
@@ -78,9 +83,9 @@ function legacyImageDefaults(slotNumber: number) {
     return {
       label: 'Git2 图 Gemini',
       baseUrl: 'https://img.yunfei.best',
-      model: 'git2图gemini',
+      model: 'gemini-3-pro-image-preview',
       apiKey: env('git2图gemini'),
-      protocol: 'openai',
+      protocol: 'gemini',
     }
   }
   return { label: `内置生图 API ${slotNumber}`, baseUrl: '', model: '', apiKey: '', protocol: 'openai' }
@@ -93,7 +98,7 @@ function imageConfig(slot: string): ImageConfig {
   const apiKeySecretName = env(`${prefix}_API_KEY_SECRET`)
   return {
     id: slot,
-    label: env(`${prefix}_LABEL`) || defaults.label,
+    label: readableLabel(env(`${prefix}_LABEL`), defaults.label),
     baseUrl: env(`${prefix}_BASE_URL`) || defaults.baseUrl,
     model: env(`${prefix}_MODEL`) || defaults.model,
     apiKey: env(`${prefix}_API_KEY`) || (apiKeySecretName ? env(apiKeySecretName) : defaults.apiKey),
@@ -156,7 +161,12 @@ async function checkLanguageConnection(config: ReturnType<typeof languageConfig>
 function imageConnectionMessage(connection: ImageConnection) {
   if (connection.status === 'connected') return '模型列表验证通过'
   if (connection.status === 'not_configured') return '配置不完整'
-  if (connection.reason === 'model_missing') return '服务可连接，但模型未出现在模型列表中，可继续实测生图'
+  if (connection.reason === 'model_missing') {
+    const suggestions = connection.availableModels?.join('、')
+    return suggestions
+      ? `配置的模型 ID 不存在。服务商可用的生图模型：${suggestions}`
+      : '配置的模型 ID 不存在，已禁止调用，请在服务商后台核对模型 ID'
+  }
   if (connection.reason === 'model_list_empty') return '服务可连接，但模型列表为空，可继续实测生图'
   if (connection.reason === 'auth_failed') return '密钥无效或无权访问模型列表'
   if (connection.reason === 'quota_exhausted') return '额度不足或已用完'
@@ -164,6 +174,11 @@ function imageConnectionMessage(connection: ImageConnection) {
   if (connection.reason === 'model_list_unsupported') return '服务未开放模型列表接口，可继续实测生图'
   if (connection.reason === 'timeout') return '连接检测超时'
   return '服务连接检测失败'
+}
+
+function imageModelSuggestions(modelIds: string[]) {
+  const likelyImageModels = modelIds.filter((model) => /image|imagen|gemini|banana|nano|flux|dall|midjourney|\u56fe/i.test(model))
+  return (likelyImageModels.length ? likelyImageModels : modelIds).slice(0, 20)
 }
 
 async function checkImageConnection(config: ImageConfig): Promise<ImageConnection> {
@@ -213,6 +228,7 @@ async function checkImageConnection(config: ImageConfig): Promise<ImageConnectio
     const connected = modelIds.includes(config.model)
     const reason = connected ? 'ok' : modelIds.length === 0 ? 'model_list_empty' : 'model_missing'
     const status = connected ? 'connected' : 'warning'
+    const availableModels = connected ? undefined : imageModelSuggestions(modelIds)
     console.info(JSON.stringify({
       event: 'image_connection_check',
       slot: config.id,
@@ -222,7 +238,7 @@ async function checkImageConnection(config: ImageConfig): Promise<ImageConnectio
       status: response.status,
       reason,
     }))
-    return { connected, status, reason, httpStatus: response.status }
+    return { connected, status, reason, httpStatus: response.status, availableModels }
   } catch (error) {
     const reason = error instanceof DOMException && error.name === 'TimeoutError' ? 'timeout' : 'network_error'
     console.warn(JSON.stringify({
@@ -256,11 +272,13 @@ async function capabilities() {
         model: config.model,
         maxSize: config.size || '4K',
         supportsCustomSize: !usesGeminiSizing,
+        supportsOriginalRatio: true,
         configured: isReady(config),
         connected: connection.connected,
         connectionStatus: connection.status,
         connectionReason: connection.reason,
         connectionMessage: imageConnectionMessage(connection),
+        availableModels: connection.availableModels || [],
       }
     }),
   }
@@ -474,6 +492,11 @@ function requestedAspectRatio(value: unknown, fallback: string) {
   return supported.has(requested) ? requested : fallback
 }
 
+function geminiAspectRatio(value: unknown) {
+  if (value === undefined || value === null || String(value).trim() === '') return ''
+  return requestedAspectRatio(value, '')
+}
+
 function geminiHeaders(config: ImageConfig, jsonBody = false) {
   return {
     ...(jsonBody ? { 'Content-Type': 'application/json' } : {}),
@@ -587,7 +610,7 @@ function imageResult(
     images: [{
       id: 1,
       title: feature === 'beautify' ? '真实生成 · 图纸美化' : '真实生成 · 主视角',
-      meta: `${config.model} · ${useGemini ? `${aspectRatio} · ${geminiImageSize(config) || '模型原生最高分辨率'}` : `${imageSize} · ${config.quality.toUpperCase()}`}`,
+      meta: `${config.model} · ${useGemini ? `${aspectRatio || '原图比例'} · ${geminiImageSize(config) || '模型原生最高分辨率'}` : `${imageSize} · ${config.quality.toUpperCase()}`}`,
       imageUrl,
     }],
   }
@@ -615,7 +638,7 @@ async function pollImageTask(body: Record<string, unknown>, user: { id: string }
   }
 
   const imageUrl = geminiImageUrl(payload)
-  const aspectRatio = requestedAspectRatio(body.imageAspectRatio, feature === 'beautify' ? '4:3' : '16:9')
+  const aspectRatio = geminiAspectRatio(body.imageAspectRatio)
   if (imageUrl) return imageResult(body, config, feature, imageUrl, aspectRatio, geminiImageSize(config), true)
 
   const status = String(payload.status || '').toLowerCase()
@@ -637,21 +660,24 @@ async function generateImage(body: Record<string, unknown>, user: { id: string }
   const prompt = imagePrompt(feature, String(body.prompt || ''))
   const useGemini = config.protocol === 'gemini' || (config.protocol === 'auto' && looksLikeGemini(config.model))
   const imageSize = requestedImageSize(body.imageSize, config.size)
-  const aspectRatio = requestedAspectRatio(body.imageAspectRatio, feature === 'beautify' ? '4:3' : '16:9')
+  const aspectRatio = useGemini
+    ? geminiAspectRatio(body.imageAspectRatio)
+    : requestedAspectRatio(body.imageAspectRatio, feature === 'beautify' ? '4:3' : '16:9')
   let imageUrl = ''
 
   if (useGemini) {
     const base = rootWithoutApiVersion(config.baseUrl)
     const geminiSize = geminiImageSize(config)
-    const imageConfigPayload: Record<string, string> = { aspectRatio }
+    const imageConfigPayload: Record<string, string> = {}
+    if (aspectRatio) imageConfigPayload.aspectRatio = aspectRatio
     if (geminiSize) imageConfigPayload.imageSize = geminiSize
     const response = await fetch(`${base}/v1beta/models/${encodeURIComponent(config.model)}:generateContent`, {
       method: 'POST',
       headers: geminiHeaders(config, true),
       body: JSON.stringify({
-        contents: [{ parts: [
-          { inlineData: { mimeType: attachment.mimeType, data: attachment.data } },
+        contents: [{ role: 'user', parts: [
           { text: prompt },
+          { inline_data: { mime_type: attachment.mimeType, data: attachment.data } },
         ] }],
         generationConfig: {
           responseModalities: ['IMAGE'],
@@ -686,12 +712,15 @@ async function generateImage(body: Record<string, unknown>, user: { id: string }
       headers: { Authorization: `Bearer ${config.apiKey}` },
       body: form,
     })
+    const payload = await readProviderPayload(response)
     if (!response.ok) {
-      const detail = await response.text()
-      throw new Error(`图生图 API ${response.status}: ${detail.slice(0, 180)}`)
+      throw new HttpError(
+        `图生图服务请求失败（上游 ${response.status}）：${providerErrorDetail(payload)}`,
+        response.status >= 500 ? 502 : 400,
+      )
     }
-    const payload = await response.json()
-    const item = payload.data?.[0]
+    const data = Array.isArray(payload.data) ? payload.data as Record<string, unknown>[] : []
+    const item = data[0]
     if (item?.b64_json) {
       imageUrl = `data:image/png;base64,${item.b64_json}`
     } else if (item?.url) {

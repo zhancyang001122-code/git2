@@ -184,9 +184,12 @@ test('Gemini 生图协议支持参考图输入与图片响应', async () => {
   const result = await generateWithApi({ feature: 'render', prompt: '暖色夜景', files: [image], options: { imageSize: '2880x3840', imageAspectRatio: '3:4' } })
   assert.equal(request.url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent')
   assert.equal(request.options.headers['x-goog-api-key'], 'test-image-key')
-  const imageConfig = JSON.parse(request.options.body).generationConfig.imageConfig
+  const body = JSON.parse(request.options.body)
+  const imageConfig = body.generationConfig.imageConfig
   assert.equal(imageConfig.imageSize, '4K')
   assert.equal(imageConfig.aspectRatio, '3:4')
+  assert.equal(body.contents[0].role, 'user')
+  assert.equal(body.contents[0].parts[1].inline_data.mime_type, 'image/png')
   assert.match(result.images[0].imageUrl, /^data:image\/png;base64,/)
 })
 
@@ -255,6 +258,7 @@ test('第三方 NewAPI 的 Gemini 生图模型自动改走原生 Gemini 端点',
   const result = await generateWithApi({ feature: 'render', prompt: '滨水夜景', files: [image] })
   assert.equal(request.url, 'https://img.yunfei.best/v1beta/models/gemini-3.1-flash-image:generateContent')
   assert.equal(request.options.headers.Authorization, 'Bearer test-image-key')
+  assert.equal(JSON.parse(request.options.body).generationConfig.imageConfig.aspectRatio, undefined)
   assert.match(result.images[0].imageUrl, /^data:image\/png;base64,/)
 })
 
