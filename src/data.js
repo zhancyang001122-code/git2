@@ -390,6 +390,7 @@ export function getConfiguredImageModes() {
         providerLabel: slot.connection.providerLabel,
         model: slot.connection.model,
         maxSize: '4K',
+        supportsOriginalRatio: true,
         supportsCustomSize: !(
           slot.connection.protocol === 'gemini-generate'
           || slot.connection.protocol === 'newapi-gemini'
@@ -600,7 +601,8 @@ async function generateRenderImages({ feature, prompt, files, config }) {
     const isNativeGoogle = config.imageProtocol === 'gemini-generate'
     const geminiBaseUrl = isNativeGoogle ? baseUrl : `${newApiRoot(baseUrl)}/v1beta`
     const imageSize = geminiImageSize(config.imageSize, config.imageModel)
-    const imageConfig = { aspectRatio: config.imageAspectRatio || (feature === 'beautify' ? '4:3' : '16:9') }
+    const imageConfig = {}
+    if (config.imageAspectRatio) imageConfig.aspectRatio = config.imageAspectRatio
     if (imageSize) imageConfig.imageSize = imageSize
     const response = await fetch(`${geminiBaseUrl}/models/${encodeURIComponent(config.imageModel)}:generateContent`, {
       method: 'POST',
@@ -611,9 +613,9 @@ async function generateRenderImages({ feature, prompt, files, config }) {
           : { Authorization: `Bearer ${config.imageApiKey}` }),
       },
       body: JSON.stringify({
-        contents: [{ parts: [
-          { inlineData: { mimeType: imageFile.type, data: base64Image } },
+        contents: [{ role: 'user', parts: [
           { text: imagePrompt },
+          { inline_data: { mime_type: imageFile.type, data: base64Image } },
         ] }],
         generationConfig: {
           responseModalities: ['IMAGE'],
