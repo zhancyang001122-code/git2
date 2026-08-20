@@ -57,12 +57,14 @@ import {
   updateMemo,
 } from './lib/supabase.js'
 import { formatElapsedTime } from './lib/time.js'
+import { originalImageOutputSize } from './lib/image-output-size.js'
 import { isInvalidSessionError } from './lib/session.js'
 import { loadWorkspaceAndCapabilities } from './lib/workspace-loader.js'
 
 const validRoutes = new Set(navItems.map((item) => item.id))
 const sidebarNavItems = navItems.filter((item) => item.id !== 'home')
 const imageFrameOptions = [
+  { id: 'original', label: '跟随原图比例 · 4K 长边', requiresCustomSize: true },
   { id: '16:9', label: '横图 16:9 · 3840×2160', size: '3840x2160', aspectRatio: '16:9' },
   { id: '4:3', label: '横图 4:3 · 3840×2880', size: '3840x2880', aspectRatio: '4:3' },
   { id: '1:1', label: '方图 1:1 · 3840×3840', size: '3840x3840', aspectRatio: '1:1' },
@@ -545,7 +547,8 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
   const usesImageModel = ['beautify', 'render'].includes(feature.id)
   const renderImageModes = imageModes.length ? imageModes : [{ id: 'demo', label: '本地演示', model: '未连接 API', maxSize: '4K', supportsCustomSize: true }]
   const activeImageMode = renderImageModes.find((mode) => mode.id === imageMode) || renderImageModes[0]
-  const activeFrame = imageFrameOptions.find((frame) => frame.id === imageFrame) || imageFrameOptions[0]
+  const availableImageFrameOptions = imageFrameOptions.filter((frame) => !frame.requiresCustomSize || activeImageMode?.supportsCustomSize)
+  const activeFrame = availableImageFrameOptions.find((frame) => frame.id === imageFrame) || availableImageFrameOptions[0]
 
   useEffect(() => {
     activeRef.current = active
@@ -561,7 +564,7 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
   }, [imageMode, imageModes])
 
   useEffect(() => {
-    if (!activeImageMode?.supportsCustomSize && imageFrame === 'custom') {
+    if (!activeImageMode?.supportsCustomSize && ['custom', 'original'].includes(imageFrame)) {
       setImageFrame(feature.id === 'beautify' ? '4:3' : '16:9')
     }
   }, [activeImageMode?.supportsCustomSize, feature.id, imageFrame])
@@ -657,8 +660,19 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
       onToast({ title: '自定义图幅无效', detail: '宽和高请输入 64–4096 之间的整数像素值。' })
       return
     }
-    const requestedImageSize = imageFrame === 'custom' ? `${customWidth}x${customHeight}` : activeFrame.size
-    const requestedAspectRatio = imageFrame === 'custom' ? undefined : activeFrame.aspectRatio
+    let requestedImageSize
+    let requestedAspectRatio
+    if (imageFrame === 'original') {
+      try {
+        requestedImageSize = await originalImageOutputSize(files.find((file) => file.type?.startsWith('image/')))
+      } catch (error) {
+        onToast({ title: '无法跟随原图比例', detail: error instanceof Error ? error.message : '请改用固定比例或自定义图幅。' })
+        return
+      }
+    } else {
+      requestedImageSize = imageFrame === 'custom' ? `${customWidth}x${customHeight}` : activeFrame.size
+      requestedAspectRatio = imageFrame === 'custom' ? undefined : activeFrame.aspectRatio
+    }
     setElapsedSeconds(0)
     setLoading(true)
     setResult(null)
@@ -769,7 +783,7 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
             <span><Cloud /> {managed ? '项目资料仍为临时附件 · 生成记录登录后云端保留' : '当前标签页内存 · 切换栏目不中断，刷新后释放'}</span>
             <div className="composer-actions">
               {usesImageModel && <label className={`image-mode-picker ${renderImageModes.length === 1 ? 'is-locked' : ''}`}><span><ImagePlus /> 生图模型</span><select aria-label="选择生图模型" value={imageMode} onChange={(event) => setImageMode(event.target.value)} disabled={loading || renderImageModes.length === 1}>{renderImageModes.map((mode) => <option value={mode.id} key={mode.id}>{mode.label} · {mode.model}{mode.maxSize ? ` · 最高 ${mode.maxSize}` : ''}</option>)}</select></label>}
-              {usesImageModel && <label className="image-mode-picker image-frame-picker"><span><SlidersHorizontal /> 输出图幅</span><select aria-label="选择输出图幅" value={imageFrame} onChange={(event) => setImageFrame(event.target.value)} disabled={loading}>{imageFrameOptions.map((frame) => <option value={frame.id} key={frame.id}>{frame.label}</option>)}{activeImageMode?.supportsCustomSize && <option value="custom">自定义宽 × 高</option>}</select></label>}
+              {usesImageModel && <label className="image-mode-picker image-frame-picker"><span><SlidersHorizontal /> 输出图幅</span><select aria-label="选择输出图幅" value={imageFrame} onChange={(event) => setImageFrame(event.target.value)} disabled={loading}>{availableImageFrameOptions.map((frame) => <option value={frame.id} key={frame.id}>{frame.label}</option>)}{activeImageMode?.supportsCustomSize && <option value="custom">自定义宽 × 高</option>}</select></label>}
               {usesImageModel && imageFrame === 'custom' && activeImageMode?.supportsCustomSize && <div className="custom-image-size" aria-label="自定义输出图幅"><label><span>宽</span><input type="number" min="64" max="4096" step="1" inputMode="numeric" value={customImageWidth} onChange={(event) => setCustomImageWidth(event.target.value)} disabled={loading} /></label><b>×</b><label><span>高</span><input type="number" min="64" max="4096" step="1" inputMode="numeric" value={customImageHeight} onChange={(event) => setCustomImageHeight(event.target.value)} disabled={loading} /></label></div>}
               <button className="button button-primary generate-button" onClick={handleGenerate} disabled={loading}>
                 {loading ? <><LoaderCircle className="spin" /> {usesImageModel ? <>生成中 <span className="button-timer">{formatElapsedTime(elapsedSeconds)}</span></> : '正在分析'}</> : <>生成专业结果 <WandSparkles /></>}

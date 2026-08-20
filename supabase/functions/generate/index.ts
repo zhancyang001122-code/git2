@@ -48,32 +48,26 @@ function languageConfig() {
 }
 
 function secondImageModel() {
-  const explicitImageModel = env('ARCHFLOW_IMAGE_2_MODEL') || env('GEMINI_IMAGE_MODEL')
-  if (explicitImageModel) return explicitImageModel
-
-  const genericGeminiModel = env('GEMINI_MODEL')
-  // gemini-3-pro-preview was a text-output model and is no longer available.
-  // Keep common Gemini CLI environment names usable while selecting the
-  // image-capable Nano Banana Pro model required by this function.
-  if (!genericGeminiModel || genericGeminiModel === 'gemini-3-pro-preview') return 'gemini-3-pro-image-preview'
-  return genericGeminiModel
+  return env('ARCHFLOW_IMAGE_2_MODEL') || 'git2图gemini'
 }
 
 function imageConfig(slot: 'image1' | 'image2'): ImageConfig {
   const prefix = slot === 'image1' ? 'ARCHFLOW_IMAGE_1' : 'ARCHFLOW_IMAGE_2'
   return {
     id: slot,
-    label: env(`${prefix}_LABEL`) || (slot === 'image1' ? '第三方生图服务' : 'Gemini 香蕉'),
+    label: env(`${prefix}_LABEL`) || (slot === 'image1' ? '第三方生图服务' : 'Git2 图 Gemini'),
     baseUrl: env(`${prefix}_BASE_URL`) || (slot === 'image1'
       ? 'https://img.yunfei.best'
-      : env('GOOGLE_GEMINI_BASE_URL') || 'https://api.uselg.top'),
+      : 'https://img.yunfei.best'),
     model: slot === 'image1'
       ? env(`${prefix}_MODEL`) || 'gpt-image-2'
       : secondImageModel(),
     apiKey: env(`${prefix}_API_KEY`) || (slot === 'image1'
       ? env('生图api 4k')
-      : env('GEMINI_API_KEY') || env('GOOGLE_API_KEY') || env('gemini香蕉')),
-    protocol: env(`${prefix}_PROTOCOL`) || (slot === 'image1' ? 'auto' : 'gemini'),
+      : env('git2图gemini')),
+    // The second model is delivered through a NewAPI channel. Its name
+    // contains "gemini", so it must not be auto-detected as native Gemini.
+    protocol: env(`${prefix}_PROTOCOL`) || (slot === 'image1' ? 'auto' : 'openai'),
     size: env(`${prefix}_SIZE`) || '4K',
     quality: env(`${prefix}_QUALITY`) || 'high',
   }
@@ -119,7 +113,10 @@ async function checkLanguageConnection(config: ReturnType<typeof languageConfig>
 }
 
 async function checkImageConnection(config: ImageConfig) {
-  if (!isReady(config)) return false
+  if (!isReady(config)) {
+    console.warn(JSON.stringify({ event: 'image_connection_check', slot: config.id, connected: false, reason: 'not_configured' }))
+    return false
+  }
   try {
     const useNativeGeminiListing = config.protocol === 'gemini'
     const endpoint = useNativeGeminiListing
@@ -130,15 +127,44 @@ async function checkImageConnection(config: ImageConfig) {
         ? { Authorization: `Bearer ${config.apiKey}`, 'x-goog-api-key': config.apiKey }
         : { Authorization: `Bearer ${config.apiKey}` },
     })
-    if (!response.ok) return false
+    if (!response.ok) {
+      console.warn(JSON.stringify({
+        event: 'image_connection_check',
+        slot: config.id,
+        model: config.model,
+        protocol: config.protocol,
+        connected: false,
+        status: response.status,
+        reason: 'provider_rejected_model_list',
+      }))
+      return false
+    }
     const payload = await response.json()
     const modelIds = Array.isArray(payload.data)
       ? payload.data.map((item: Record<string, unknown>) => String(item.id || '')).filter(Boolean)
       : Array.isArray(payload.models)
         ? payload.models.map((item: Record<string, unknown>) => String(item.name || '').replace(/^models\//, '')).filter(Boolean)
         : []
-    return modelIds.length === 0 || modelIds.includes(config.model)
+    const connected = modelIds.length === 0 || modelIds.includes(config.model)
+    console.info(JSON.stringify({
+      event: 'image_connection_check',
+      slot: config.id,
+      model: config.model,
+      protocol: config.protocol,
+      connected,
+      status: response.status,
+      reason: connected ? 'ok' : 'model_missing',
+    }))
+    return connected
   } catch {
+    console.warn(JSON.stringify({
+      event: 'image_connection_check',
+      slot: config.id,
+      model: config.model,
+      protocol: config.protocol,
+      connected: false,
+      reason: 'network_error',
+    }))
     return false
   }
 }
