@@ -2,8 +2,38 @@ import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-retry-count, traceparent, tracestate, baggage',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+}
+
+function corsOrigin(req: Request) {
+  const origin = req.headers.get('Origin')?.trim() || ''
+  if (!origin) return '*'
+  if (origin === 'https://archflow.zaneyang.xyz') return origin
+  if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin)) return origin
+  if (/^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/i.test(origin)) return origin
+  return 'null'
+}
+
+function requestCorsHeaders(req: Request) {
+  return {
+    ...corsHeaders,
+    'Access-Control-Allow-Origin': corsOrigin(req),
+    'Access-Control-Allow-Credentials': 'true',
+    'Vary': 'Origin, Access-Control-Request-Headers',
+  }
+}
+
+function preflightCorsHeaders(req: Request) {
+  const requestedHeaders = req.headers.get('Access-Control-Request-Headers')?.trim()
+  return {
+    ...requestCorsHeaders(req),
+    ...(requestedHeaders ? { 'Access-Control-Allow-Headers': requestedHeaders } : {}),
+    ...(req.headers.get('Access-Control-Request-Private-Network') === 'true'
+      ? { 'Access-Control-Allow-Private-Network': 'true' }
+      : {}),
+    'Access-Control-Max-Age': '86400',
+  }
 }
 
 type Attachment = { name: string; mimeType: string; data: string }
@@ -15,6 +45,7 @@ type ImageConfig = {
   model: string
   apiKey: string
   protocol: string
+  responseMode: 'inline' | 'url'
   size: string
   quality: string
 }
@@ -24,6 +55,16 @@ type ImageConnection = {
   status: 'connected' | 'warning' | 'error' | 'not_configured'
   reason: string
   httpStatus?: number
+  availableModels?: string[]
+}
+
+type ManagedImageTask = {
+  id: string
+  status: 'processing' | 'completed' | 'failed'
+  image_url?: string | null
+  error_message?: string | null
+  created_at: string
+  expires_at: string
 }
 
 class HttpError extends Error {
@@ -35,15 +76,79 @@ class HttpError extends Error {
   }
 }
 
-function json(data: unknown, status = 200) {
+function json(data: unknown, status = 200, req?: Request) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' },
+    headers: { ...(req ? requestCorsHeaders(req) : corsHeaders), 'Content-Type': 'application/json; charset=utf-8' },
   })
 }
 
 function env(name: string) {
   return (Deno.env.get(name) || '').trim()
+}
+
+function serviceRoleKey() {
+  return env('SUPABASE_SERVICE_ROLE_KEY')
+}
+
+function adminRestHeaders(jsonBody = false) {
+  const key = serviceRoleKey()
+  if (!key) throw new HttpError('生图任务存储尚未完成服务端配置。', 500)
+  return {
+    ...(jsonBody ? { 'Content-Type': 'application/json' } : {}),
+    apikey: key,
+    Authorization: `Bearer ${key}`,
+  }
+}
+
+function imageTaskRestUrl(query = '') {
+  const supabaseUrl = env('SUPABASE_URL')
+  if (!supabaseUrl) throw new HttpError('生图任务存储缺少 SUPABASE_URL。', 500)
+  return `${supabaseUrl}/rest/v1/image_generation_tasks${query}`
+}
+
+async function createManagedImageTask(userId: string, imageSlot: string) {
+  const expiredBefore = encodeURIComponent(new Date().toISOString())
+  const cleanupResponse = await fetch(imageTaskRestUrl(`?expires_at=lt.${expiredBefore}`), {
+    method: 'DELETE',
+    headers: { ...adminRestHeaders(), Prefer: 'return=minimal' },
+  })
+  if (!cleanupResponse.ok) {
+    console.warn(JSON.stringify({ event: 'image_task_cleanup_failed', status: cleanupResponse.status }))
+  }
+  const taskId = `imgtask_${crypto.randomUUID()}`
+  const response = await fetch(imageTaskRestUrl(), {
+    method: 'POST',
+    headers: { ...adminRestHeaders(true), Prefer: 'return=minimal' },
+    body: JSON.stringify({ id: taskId, user_id: userId, image_slot: imageSlot }),
+  })
+  if (!response.ok) {
+    throw new HttpError(`无法创建 4K 生图后台任务（${response.status}）。`, 502)
+  }
+  return taskId
+}
+
+async function managedImageTask(taskId: string, userId: string): Promise<ManagedImageTask | null> {
+  const query = `?id=eq.${encodeURIComponent(taskId)}&user_id=eq.${encodeURIComponent(userId)}&select=id,status,image_url,error_message,created_at,expires_at&limit=1`
+  const response = await fetch(imageTaskRestUrl(query), { headers: adminRestHeaders() })
+  if (!response.ok) throw new HttpError(`无法读取 4K 生图任务（${response.status}）。`, 502)
+  const rows = await response.json() as ManagedImageTask[]
+  return rows[0] || null
+}
+
+async function updateManagedImageTask(taskId: string, values: Record<string, unknown>) {
+  const response = await fetch(imageTaskRestUrl(`?id=eq.${encodeURIComponent(taskId)}`), {
+    method: 'PATCH',
+    headers: { ...adminRestHeaders(true), Prefer: 'return=minimal' },
+    body: JSON.stringify({ ...values, updated_at: new Date().toISOString() }),
+  })
+  if (!response.ok) {
+    console.error(JSON.stringify({ event: 'image_task_update_failed', taskId, status: response.status }))
+  }
+}
+
+function readableLabel(value: string, fallback: string) {
+  return value && !value.includes('\uFFFD') ? value : fallback
 }
 
 function languageConfig() {
@@ -72,18 +177,27 @@ function legacyImageDefaults(slotNumber: number) {
       model: 'gpt-image-2',
       apiKey: env('生图api 4k'),
       protocol: 'auto',
+      responseMode: 'inline',
     }
   }
   if (slotNumber === 2) {
     return {
       label: 'Git2 图 Gemini',
       baseUrl: 'https://img.yunfei.best',
-      model: 'git2图gemini',
+      model: 'gemini-3-pro-image-preview',
       apiKey: env('git2图gemini'),
-      protocol: 'openai',
+      protocol: 'gemini',
+      responseMode: 'url',
     }
   }
-  return { label: `内置生图 API ${slotNumber}`, baseUrl: '', model: '', apiKey: '', protocol: 'openai' }
+  return {
+    label: `内置生图 API ${slotNumber}`,
+    baseUrl: '',
+    model: '',
+    apiKey: '',
+    protocol: 'openai',
+    responseMode: 'inline',
+  }
 }
 
 function imageConfig(slot: string): ImageConfig {
@@ -93,11 +207,12 @@ function imageConfig(slot: string): ImageConfig {
   const apiKeySecretName = env(`${prefix}_API_KEY_SECRET`)
   return {
     id: slot,
-    label: env(`${prefix}_LABEL`) || defaults.label,
+    label: readableLabel(env(`${prefix}_LABEL`), defaults.label),
     baseUrl: env(`${prefix}_BASE_URL`) || defaults.baseUrl,
     model: env(`${prefix}_MODEL`) || defaults.model,
     apiKey: env(`${prefix}_API_KEY`) || (apiKeySecretName ? env(apiKeySecretName) : defaults.apiKey),
     protocol: env(`${prefix}_PROTOCOL`) || defaults.protocol,
+    responseMode: env(`${prefix}_RESPONSE_MODE`) === 'url' ? 'url' : defaults.responseMode,
     size: env(`${prefix}_SIZE`) || '4K',
     quality: env(`${prefix}_QUALITY`) || 'high',
   }
@@ -106,7 +221,7 @@ function imageConfig(slot: string): ImageConfig {
 function imageConfigs() {
   const declaredSlots = new Set<number>([1, 2])
   for (const name of Object.keys(Deno.env.toObject())) {
-    const match = /^ARCHFLOW_IMAGE_([1-9]\d*)_(?:LABEL|BASE_URL|MODEL|API_KEY|API_KEY_SECRET|PROTOCOL|SIZE|QUALITY)$/.exec(name)
+    const match = /^ARCHFLOW_IMAGE_([1-9]\d*)_(?:LABEL|BASE_URL|MODEL|API_KEY|API_KEY_SECRET|PROTOCOL|RESPONSE_MODE|SIZE|QUALITY)$/.exec(name)
     if (match) declaredSlots.add(Number(match[1]))
   }
   return [...declaredSlots]
@@ -156,7 +271,12 @@ async function checkLanguageConnection(config: ReturnType<typeof languageConfig>
 function imageConnectionMessage(connection: ImageConnection) {
   if (connection.status === 'connected') return '模型列表验证通过'
   if (connection.status === 'not_configured') return '配置不完整'
-  if (connection.reason === 'model_missing') return '服务可连接，但模型未出现在模型列表中，可继续实测生图'
+  if (connection.reason === 'model_missing') {
+    const suggestions = connection.availableModels?.join('、')
+    return suggestions
+      ? `配置的模型 ID 不存在。服务商可用的生图模型：${suggestions}`
+      : '配置的模型 ID 不存在，已禁止调用，请在服务商后台核对模型 ID'
+  }
   if (connection.reason === 'model_list_empty') return '服务可连接，但模型列表为空，可继续实测生图'
   if (connection.reason === 'auth_failed') return '密钥无效或无权访问模型列表'
   if (connection.reason === 'quota_exhausted') return '额度不足或已用完'
@@ -164,6 +284,11 @@ function imageConnectionMessage(connection: ImageConnection) {
   if (connection.reason === 'model_list_unsupported') return '服务未开放模型列表接口，可继续实测生图'
   if (connection.reason === 'timeout') return '连接检测超时'
   return '服务连接检测失败'
+}
+
+function imageModelSuggestions(modelIds: string[]) {
+  const likelyImageModels = modelIds.filter((model) => /image|imagen|gemini|banana|nano|flux|dall|midjourney|\u56fe/i.test(model))
+  return (likelyImageModels.length ? likelyImageModels : modelIds).slice(0, 20)
 }
 
 async function checkImageConnection(config: ImageConfig): Promise<ImageConnection> {
@@ -213,6 +338,7 @@ async function checkImageConnection(config: ImageConfig): Promise<ImageConnectio
     const connected = modelIds.includes(config.model)
     const reason = connected ? 'ok' : modelIds.length === 0 ? 'model_list_empty' : 'model_missing'
     const status = connected ? 'connected' : 'warning'
+    const availableModels = connected ? undefined : imageModelSuggestions(modelIds)
     console.info(JSON.stringify({
       event: 'image_connection_check',
       slot: config.id,
@@ -222,7 +348,7 @@ async function checkImageConnection(config: ImageConfig): Promise<ImageConnectio
       status: response.status,
       reason,
     }))
-    return { connected, status, reason, httpStatus: response.status }
+    return { connected, status, reason, httpStatus: response.status, availableModels }
   } catch (error) {
     const reason = error instanceof DOMException && error.name === 'TimeoutError' ? 'timeout' : 'network_error'
     console.warn(JSON.stringify({
@@ -256,11 +382,13 @@ async function capabilities() {
         model: config.model,
         maxSize: config.size || '4K',
         supportsCustomSize: !usesGeminiSizing,
+        supportsOriginalRatio: true,
         configured: isReady(config),
         connected: connection.connected,
         connectionStatus: connection.status,
         connectionReason: connection.reason,
         connectionMessage: imageConnectionMessage(connection),
+        availableModels: connection.availableModels || [],
       }
     }),
   }
@@ -474,6 +602,11 @@ function requestedAspectRatio(value: unknown, fallback: string) {
   return supported.has(requested) ? requested : fallback
 }
 
+function geminiAspectRatio(value: unknown) {
+  if (value === undefined || value === null || String(value).trim() === '') return ''
+  return requestedAspectRatio(value, '')
+}
+
 function geminiHeaders(config: ImageConfig, jsonBody = false) {
   return {
     ...(jsonBody ? { 'Content-Type': 'application/json' } : {}),
@@ -510,10 +643,84 @@ function geminiImageUrl(payload: Record<string, unknown>) {
   const candidates = Array.isArray(payload.candidates) ? payload.candidates : []
   const content = (candidates[0] as Record<string, unknown> | undefined)?.content as Record<string, unknown> | undefined
   const parts = Array.isArray(content?.parts) ? content.parts as Record<string, unknown>[] : []
-  const imagePart = parts.find((part) => part.inlineData || part.inline_data)
-  const inlineData = (imagePart?.inlineData || imagePart?.inline_data) as Record<string, unknown> | undefined
-  if (!inlineData?.data) return ''
-  return `data:${inlineData.mimeType || inlineData.mime_type || 'image/png'};base64,${inlineData.data}`
+  for (const part of parts) {
+    const fileData = (part.fileData || part.file_data) as Record<string, unknown> | undefined
+    const fileUri = String(fileData?.fileUri || fileData?.file_uri || '')
+    if (/^https?:\/\//i.test(fileUri)) return fileUri
+
+    const inlineData = (part.inlineData || part.inline_data) as Record<string, unknown> | undefined
+    if (inlineData?.data) {
+      return `data:${inlineData.mimeType || inlineData.mime_type || 'image/png'};base64,${inlineData.data}`
+    }
+
+    const textUrl = String(part.text || '').match(/https?:\/\/[^\s<>"']+/i)?.[0] || ''
+    if (textUrl) return textUrl
+  }
+  return ''
+}
+
+function geminiGenerationPayload(
+  config: ImageConfig,
+  prompt: string,
+  attachment: Attachment,
+  aspectRatio: string,
+) {
+  const imageConfigPayload: Record<string, string> = {}
+  if (aspectRatio) imageConfigPayload.aspectRatio = aspectRatio
+  const imageSize = geminiImageSize(config)
+  if (imageSize) imageConfigPayload.imageSize = imageSize
+  return {
+    contents: [{ role: 'user', parts: [
+      { text: prompt },
+      { inline_data: { mime_type: attachment.mimeType, data: attachment.data } },
+    ] }],
+    generationConfig: {
+      responseModalities: [config.responseMode === 'url' ? 'TEXT' : 'IMAGE'],
+      imageConfig: imageConfigPayload,
+    },
+  }
+}
+
+async function requestGeminiImage(
+  config: ImageConfig,
+  prompt: string,
+  attachment: Attachment,
+  aspectRatio: string,
+) {
+  const base = rootWithoutApiVersion(config.baseUrl)
+  const response = await fetch(`${base}/v1beta/models/${encodeURIComponent(config.model)}:generateContent`, {
+    method: 'POST',
+    headers: geminiHeaders(config, true),
+    body: JSON.stringify(geminiGenerationPayload(config, prompt, attachment, aspectRatio)),
+  })
+  const payload = await readProviderPayload(response)
+  if (!response.ok) {
+    throw new HttpError(`Gemini 生图 API ${response.status}: ${providerErrorDetail(payload)}`, response.status >= 500 ? 502 : 400)
+  }
+  return { response, payload }
+}
+
+async function runManagedGeminiTask(
+  taskId: string,
+  config: ImageConfig,
+  prompt: string,
+  attachment: Attachment,
+  aspectRatio: string,
+) {
+  try {
+    const { response, payload } = await requestGeminiImage(config, prompt, attachment, aspectRatio)
+    if (response.status === 202 || payload.execution_mode === 'async' || imageTaskId(payload)) {
+      throw new Error('上游返回了未完成的异步任务，但当前服务未提供兼容的图片结果。')
+    }
+    const imageUrl = geminiImageUrl(payload)
+    if (!imageUrl) throw new Error(`Gemini API 已响应，但没有返回可显示的图片：${providerErrorDetail(payload)}`)
+    await updateManagedImageTask(taskId, { status: 'completed', image_url: imageUrl, error_message: null })
+    console.info(JSON.stringify({ event: 'managed_image_task_completed', taskId }))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Gemini 后台生图失败。'
+    await updateManagedImageTask(taskId, { status: 'failed', error_message: message.slice(0, 1000), image_url: null })
+    console.error(JSON.stringify({ event: 'managed_image_task_failed', taskId, message: message.slice(0, 500) }))
+  }
 }
 
 function imageTaskId(payload: Record<string, unknown>) {
@@ -587,7 +794,7 @@ function imageResult(
     images: [{
       id: 1,
       title: feature === 'beautify' ? '真实生成 · 图纸美化' : '真实生成 · 主视角',
-      meta: `${config.model} · ${useGemini ? `${aspectRatio} · ${geminiImageSize(config) || '模型原生最高分辨率'}` : `${imageSize} · ${config.quality.toUpperCase()}`}`,
+      meta: `${config.model} · ${useGemini ? `${aspectRatio || '原图比例'} · ${geminiImageSize(config) || '模型原生最高分辨率'}` : `${imageSize} · ${config.quality.toUpperCase()}`}`,
       imageUrl,
     }],
   }
@@ -606,6 +813,25 @@ async function pollImageTask(body: Record<string, unknown>, user: { id: string }
   const expectedToken = await signImageTask(config, user.id, slot, taskId)
   if (!safeTokenEqual(taskToken, expectedToken)) throw new HttpError('无权查询这个 4K 生图任务。', 403)
 
+  const managedTask = await managedImageTask(taskId, user.id)
+  if (managedTask) {
+    const aspectRatio = geminiAspectRatio(body.imageAspectRatio)
+    if (new Date(managedTask.expires_at).getTime() <= Date.now()) {
+      throw new HttpError('这个 4K 生图任务已过期，请重新生成。', 410)
+    }
+    if (managedTask.status === 'completed' && managedTask.image_url) {
+      return imageResult(body, config, feature, managedTask.image_url, aspectRatio, geminiImageSize(config), true)
+    }
+    if (managedTask.status === 'failed') {
+      throw new HttpError(`Gemini 4K 生图任务失败：${managedTask.error_message || '上游未返回具体原因。'}`, 400)
+    }
+    const createdAt = new Date(managedTask.created_at).getTime()
+    if (Number.isFinite(createdAt) && Date.now() - createdAt > 7 * 60 * 1000) {
+      throw new HttpError('Gemini 4K 后台任务超过 7 分钟仍未完成，请重新生成。', 504)
+    }
+    return pendingImageTask({ id: taskId, poll_after_ms: 2000 }, config, user.id, slot)
+  }
+
   const response = await fetch(`${rootWithoutApiVersion(config.baseUrl)}/v1/images/tasks/${encodeURIComponent(taskId)}`, {
     headers: geminiHeaders(config),
   })
@@ -615,7 +841,7 @@ async function pollImageTask(body: Record<string, unknown>, user: { id: string }
   }
 
   const imageUrl = geminiImageUrl(payload)
-  const aspectRatio = requestedAspectRatio(body.imageAspectRatio, feature === 'beautify' ? '4:3' : '16:9')
+  const aspectRatio = geminiAspectRatio(body.imageAspectRatio)
   if (imageUrl) return imageResult(body, config, feature, imageUrl, aspectRatio, geminiImageSize(config), true)
 
   const status = String(payload.status || '').toLowerCase()
@@ -637,32 +863,18 @@ async function generateImage(body: Record<string, unknown>, user: { id: string }
   const prompt = imagePrompt(feature, String(body.prompt || ''))
   const useGemini = config.protocol === 'gemini' || (config.protocol === 'auto' && looksLikeGemini(config.model))
   const imageSize = requestedImageSize(body.imageSize, config.size)
-  const aspectRatio = requestedAspectRatio(body.imageAspectRatio, feature === 'beautify' ? '4:3' : '16:9')
+  const aspectRatio = useGemini
+    ? geminiAspectRatio(body.imageAspectRatio)
+    : requestedAspectRatio(body.imageAspectRatio, feature === 'beautify' ? '4:3' : '16:9')
   let imageUrl = ''
 
   if (useGemini) {
-    const base = rootWithoutApiVersion(config.baseUrl)
-    const geminiSize = geminiImageSize(config)
-    const imageConfigPayload: Record<string, string> = { aspectRatio }
-    if (geminiSize) imageConfigPayload.imageSize = geminiSize
-    const response = await fetch(`${base}/v1beta/models/${encodeURIComponent(config.model)}:generateContent`, {
-      method: 'POST',
-      headers: geminiHeaders(config, true),
-      body: JSON.stringify({
-        contents: [{ parts: [
-          { inlineData: { mimeType: attachment.mimeType, data: attachment.data } },
-          { text: prompt },
-        ] }],
-        generationConfig: {
-          responseModalities: ['IMAGE'],
-          imageConfig: imageConfigPayload,
-        },
-      }),
-    })
-    const payload = await readProviderPayload(response)
-    if (!response.ok) {
-      throw new HttpError(`Gemini 生图 API ${response.status}: ${providerErrorDetail(payload)}`, response.status >= 500 ? 502 : 400)
+    if (config.responseMode === 'url') {
+      const taskId = await createManagedImageTask(user.id, slot)
+      EdgeRuntime.waitUntil(runManagedGeminiTask(taskId, config, prompt, attachment, aspectRatio))
+      return pendingImageTask({ id: taskId, poll_after_ms: 2000 }, config, user.id, slot)
     }
+    const { response, payload } = await requestGeminiImage(config, prompt, attachment, aspectRatio)
     if (response.status === 202 || payload.execution_mode === 'async' || imageTaskId(payload)) {
       return pendingImageTask(payload, config, user.id, slot)
     }
@@ -686,12 +898,15 @@ async function generateImage(body: Record<string, unknown>, user: { id: string }
       headers: { Authorization: `Bearer ${config.apiKey}` },
       body: form,
     })
+    const payload = await readProviderPayload(response)
     if (!response.ok) {
-      const detail = await response.text()
-      throw new Error(`图生图 API ${response.status}: ${detail.slice(0, 180)}`)
+      throw new HttpError(
+        `图生图服务请求失败（上游 ${response.status}）：${providerErrorDetail(payload)}`,
+        response.status >= 500 ? 502 : 400,
+      )
     }
-    const payload = await response.json()
-    const item = payload.data?.[0]
+    const data = Array.isArray(payload.data) ? payload.data as Record<string, unknown>[] : []
+    const item = data[0]
     if (item?.b64_json) {
       imageUrl = `data:image/png;base64,${item.b64_json}`
     } else if (item?.url) {
@@ -707,20 +922,20 @@ async function generateImage(body: Record<string, unknown>, user: { id: string }
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
-  if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: preflightCorsHeaders(req) })
+  if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405, req)
 
   try {
     const user = await requireAuthenticatedUser(req)
     const body = await req.json()
-    if (body.action === 'capabilities') return json(await capabilities())
-    if (body.action === 'image-task-status') return json(await pollImageTask(body, user))
+    if (body.action === 'capabilities') return json(await capabilities(), 200, req)
+    if (body.action === 'image-task-status') return json(await pollImageTask(body, user), 200, req)
     const feature = String(body.feature || '')
-    if (feature === 'render' || feature === 'beautify') return json(await generateImage(body, user))
-    return json(await generateStructured(body))
+    if (feature === 'render' || feature === 'beautify') return json(await generateImage(body, user), 200, req)
+    return json(await generateStructured(body), 200, req)
   } catch (error) {
     const message = error instanceof Error ? error.message : '生成服务发生未知错误。'
     console.error(JSON.stringify({ event: 'generate_error', message: message.slice(0, 1000) }))
-    return json({ error: message }, error instanceof HttpError ? error.status : 400)
+    return json({ error: message }, error instanceof HttpError ? error.status : 400, req)
   }
 })
