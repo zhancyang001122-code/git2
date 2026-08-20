@@ -149,6 +149,7 @@ export function createAssetRecord(feature, prompt, result, id = Date.now()) {
         title: image.title || (feature.id === 'beautify' ? '图纸美化成果' : 'AI 渲染图'),
         meta: image.meta || result.model || '生成图像',
         imageUrl: image.imageUrl,
+        assetToken: image.assetToken,
       })).filter((item) => item.imageUrl)
     : []
   return {

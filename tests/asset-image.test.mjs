@@ -6,6 +6,7 @@ import {
   prepareImageForStorage,
   storedImageName,
 } from '../src/lib/asset-image.js'
+import { createAssetRecord, features } from '../src/data.js'
 
 function fakeBlob(size, type = 'image/png') {
   return { size, type }
@@ -45,4 +46,12 @@ test('oversized assets fail before Supabase upload with an actionable message', 
     prepareImageForStorage(original, async () => { throw new Error('codec unavailable') }),
     /超过 40 MiB/,
   )
+})
+
+test('managed remote image keeps its signed asset persistence token', () => {
+  const feature = features.find((item) => item.id === 'render')
+  const asset = createAssetRecord(feature, '测试建筑渲染', {
+    images: [{ imageUrl: 'https://cdn.example.com/render.png', assetToken: 'expires.signature' }],
+  })
+  assert.equal(asset.artifacts[0].assetToken, 'expires.signature')
 })

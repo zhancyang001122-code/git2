@@ -82,7 +82,7 @@ git2图gemini=真实 API Key
 
 API Key 仅写入 `sessionStorage`，关闭标签页后清除，不会进入源码、构建产物或 Git。浏览器直连接口仍要求网络可访问服务商并允许 CORS；正式产品必须改为服务端代理。
 
-上传文件只存在当前标签页的 React 内存中，切换栏目不会清除，刷新或关闭标签页后释放；启用真实 API 后，图片会发送给用户选择的第三方模型服务，但 ArchFlow POC 不上传到自己的服务器。AI 渲染结果点击“保存到资产”后，会连同真实生成图一起保留在当前标签页内存，可在“我的资产 → 查看详情”中预览和再次下载；刷新或关闭后仍会消失。跨设备资产、图纸解析、建模、长期文件存储和真实导出仍属于后端能力边界。完整建议见 [`docs/TECHNICAL_ARCHITECTURE.md`](docs/TECHNICAL_ARCHITECTURE.md)。
+原始上传文件只存在当前标签页的 React 内存中，切换栏目不会清除，刷新或关闭标签页后释放；启用真实 API 后，参考图会发送给当前选择的第三方模型服务。访客模式生成结果仍只保留在当前标签页；`内部账户1` 点击“保存到资产”后，生成图会写入启用用户级 RLS 的私有 `user-assets` 存储桶，资产记录写入 Postgres，可跨设备预览和下载。对于第三方返回的远程图片 URL，浏览器不会直接跨域读取，而是携带与当前用户绑定的短期签名，请求 `generate` Edge Function 服务端校验文件类型、40 MiB 上限并转存，从而避免供应商 CORS 设置导致“能显示但不能保存”。完整建议见 [`docs/TECHNICAL_ARCHITECTURE.md`](docs/TECHNICAL_ARCHITECTURE.md)。
 
 ## 公开部署
 

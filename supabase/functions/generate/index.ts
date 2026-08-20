@@ -6,6 +6,10 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
 }
 
+const ASSET_BUCKET = 'user-assets'
+const ASSET_MAX_BYTES = 40 * 1024 * 1024
+const ASSET_TOKEN_TTL_MS = 24 * 60 * 60 * 1000
+
 function corsOrigin(req: Request) {
   const origin = req.headers.get('Origin')?.trim() || ''
   if (!origin) return '*'
@@ -105,6 +109,13 @@ function imageTaskRestUrl(query = '') {
   const supabaseUrl = env('SUPABASE_URL')
   if (!supabaseUrl) throw new HttpError('生图任务存储缺少 SUPABASE_URL。', 500)
   return `${supabaseUrl}/rest/v1/image_generation_tasks${query}`
+}
+
+function storageObjectUrl(objectPath: string) {
+  const supabaseUrl = env('SUPABASE_URL')
+  if (!supabaseUrl) throw new HttpError('资产存储缺少 SUPABASE_URL。', 500)
+  const encodedPath = objectPath.split('/').map(encodeURIComponent).join('/')
+  return `${supabaseUrl}/storage/v1/object/${ASSET_BUCKET}/${encodedPath}`
 }
 
 async function createManagedImageTask(userId: string, imageSlot: string) {
@@ -737,6 +748,47 @@ function base64Url(bytes: Uint8Array) {
   return encodeBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
 }
 
+async function hmacSignature(secret: string, value: string) {
+  if (!secret) throw new HttpError('资产保存签名尚未完成服务端配置。', 500)
+  const encoder = new TextEncoder()
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(value))
+  return base64Url(new Uint8Array(signature))
+}
+
+async function signRemoteArtifact(imageUrl: string, userId: string) {
+  if (!/^https:\/\//i.test(imageUrl)) return undefined
+  const expiresAt = Date.now() + ASSET_TOKEN_TTL_MS
+  const signature = await hmacSignature(serviceRoleKey(), `${userId}\n${expiresAt}\n${imageUrl}`)
+  return `${expiresAt}.${signature}`
+}
+
+async function verifyRemoteArtifactToken(imageUrl: string, userId: string, token: string) {
+  const [expiresRaw, signature = ''] = token.split('.', 2)
+  const expiresAt = Number(expiresRaw)
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() || expiresAt > Date.now() + ASSET_TOKEN_TTL_MS + 60_000) {
+    throw new HttpError('生成图保存凭据已过期，请重新生成后再保存。', 410)
+  }
+  const expected = await hmacSignature(serviceRoleKey(), `${userId}\n${expiresAt}\n${imageUrl}`)
+  if (!safeTokenEqual(signature, expected)) throw new HttpError('生成图保存凭据无效。', 403)
+}
+
+async function authorizeRemoteArtifact(imageUrl: string, userId: string, token: string) {
+  if (token) return verifyRemoteArtifactToken(imageUrl, userId, token)
+  const now = encodeURIComponent(new Date().toISOString())
+  const query = `?user_id=eq.${encodeURIComponent(userId)}&status=eq.completed&expires_at=gt.${now}&image_url=eq.${encodeURIComponent(imageUrl)}&select=id&limit=1`
+  const response = await fetch(imageTaskRestUrl(query), { headers: adminRestHeaders() })
+  if (!response.ok) throw new HttpError('无法验证历史生成图，请稍后重试。', 502)
+  const tasks = await response.json() as Array<{ id: string }>
+  if (!tasks.length) throw new HttpError('这张远程图片不属于当前账号的有效生成任务，请重新生成后再保存。', 403)
+}
+
 async function signImageTask(config: ImageConfig, userId: string, slot: string, taskId: string) {
   const encoder = new TextEncoder()
   const key = await crypto.subtle.importKey(
@@ -772,7 +824,7 @@ async function pendingImageTask(payload: Record<string, unknown>, config: ImageC
   }
 }
 
-function imageResult(
+async function imageResult(
   body: Record<string, unknown>,
   config: ImageConfig,
   feature: 'render' | 'beautify',
@@ -780,8 +832,10 @@ function imageResult(
   aspectRatio: string,
   imageSize: string,
   useGemini: boolean,
+  userId: string,
   originalImageUrl = '',
 ) {
+  const assetToken = await signRemoteArtifact(imageUrl, userId)
   return {
     id: `${feature}-${Date.now()}`,
     feature,
@@ -796,8 +850,84 @@ function imageResult(
       title: feature === 'beautify' ? '真实生成 · 图纸美化' : '真实生成 · 主视角',
       meta: `${config.model} · ${useGemini ? `${aspectRatio || '原图比例'} · ${geminiImageSize(config) || '模型原生最高分辨率'}` : `${imageSize} · ${config.quality.toUpperCase()}`}`,
       imageUrl,
+      assetToken,
     }],
   }
+}
+
+function imageTypeFromBytes(bytes: Uint8Array, declaredType: string) {
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png'
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
+  if (String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP') return 'image/webp'
+  const type = declaredType.split(';', 1)[0].trim().toLowerCase()
+  throw new HttpError(`生图服务返回的文件不是有效的 PNG、JPG 或 WEBP 图片（${type || '未知类型'}）。`, 415)
+}
+
+function storageImageName(value: unknown, contentType: string) {
+  const extension = contentType === 'image/jpeg' ? 'jpg' : contentType === 'image/webp' ? 'webp' : 'png'
+  const base = String(value || 'generated-image')
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'generated-image'
+  return `${base}.${extension}`
+}
+
+async function persistRemoteArtifact(body: Record<string, unknown>, user: { id: string }) {
+  const imageUrl = String(body.imageUrl || '')
+  const assetToken = String(body.assetToken || '')
+  const packageId = String(body.packageId || '')
+  if (!/^https:\/\//i.test(imageUrl)) throw new HttpError('仅允许保存由模型返回的 HTTPS 图片。', 400)
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(packageId)) {
+    throw new HttpError('资产包标识无效。', 400)
+  }
+  await authorizeRemoteArtifact(imageUrl, user.id, assetToken)
+
+  let sourceResponse: Response
+  try {
+    sourceResponse = await fetch(imageUrl, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(90_000),
+      headers: { 'User-Agent': 'ArchFlow-Asset-Persistence/1.0' },
+    })
+  } catch {
+    throw new HttpError('生成图源站暂时无法读取，请稍后重试保存。', 502)
+  }
+  if (!sourceResponse.ok) throw new HttpError(`生成图源站读取失败（${sourceResponse.status}）。`, 502)
+  const declaredLength = Number(sourceResponse.headers.get('content-length') || 0)
+  if (declaredLength > ASSET_MAX_BYTES) throw new HttpError('生成图超过资产库 40 MiB 上限。', 413)
+
+  let bytes: Uint8Array
+  try {
+    bytes = new Uint8Array(await sourceResponse.arrayBuffer())
+  } catch {
+    throw new HttpError('生成图下载中断，请稍后重试保存。', 502)
+  }
+  if (!bytes.length) throw new HttpError('生成图源站返回了空文件。', 502)
+  if (bytes.length > ASSET_MAX_BYTES) throw new HttpError('生成图超过资产库 40 MiB 上限。', 413)
+  const contentType = imageTypeFromBytes(bytes, sourceResponse.headers.get('content-type') || '')
+  const fileName = storageImageName(body.fileName, contentType)
+  const storagePath = `${user.id}/${packageId}/${fileName}`
+  let uploadResponse: Response
+  try {
+    uploadResponse = await fetch(storageObjectUrl(storagePath), {
+      method: 'POST',
+      headers: {
+        ...adminRestHeaders(),
+        'Content-Type': contentType,
+        'Cache-Control': '3600',
+        'x-upsert': 'true',
+      },
+      body: bytes,
+    })
+  } catch {
+    throw new HttpError('资产库网络暂时不可用，请稍后重试保存。', 502)
+  }
+  if (!uploadResponse.ok) {
+    const detail = (await uploadResponse.text()).slice(0, 300)
+    throw new HttpError(`资产库上传失败（${uploadResponse.status}）：${detail || 'Storage 未返回具体原因。'}`, 502)
+  }
+  console.info(JSON.stringify({ event: 'asset_artifact_persisted', userId: user.id, storagePath, bytes: bytes.length }))
+  return { storagePath, fileName, contentType, bytes: bytes.length }
 }
 
 async function pollImageTask(body: Record<string, unknown>, user: { id: string }) {
@@ -820,7 +950,7 @@ async function pollImageTask(body: Record<string, unknown>, user: { id: string }
       throw new HttpError('这个 4K 生图任务已过期，请重新生成。', 410)
     }
     if (managedTask.status === 'completed' && managedTask.image_url) {
-      return imageResult(body, config, feature, managedTask.image_url, aspectRatio, geminiImageSize(config), true)
+      return imageResult(body, config, feature, managedTask.image_url, aspectRatio, geminiImageSize(config), true, user.id)
     }
     if (managedTask.status === 'failed') {
       throw new HttpError(`Gemini 4K 生图任务失败：${managedTask.error_message || '上游未返回具体原因。'}`, 400)
@@ -842,7 +972,7 @@ async function pollImageTask(body: Record<string, unknown>, user: { id: string }
 
   const imageUrl = geminiImageUrl(payload)
   const aspectRatio = geminiAspectRatio(body.imageAspectRatio)
-  if (imageUrl) return imageResult(body, config, feature, imageUrl, aspectRatio, geminiImageSize(config), true)
+  if (imageUrl) return imageResult(body, config, feature, imageUrl, aspectRatio, geminiImageSize(config), true, user.id)
 
   const status = String(payload.status || '').toLowerCase()
   const failed = ['failed', 'error', 'cancelled', 'canceled', 'expired'].includes(status)
@@ -918,7 +1048,7 @@ async function generateImage(body: Record<string, unknown>, user: { id: string }
     if (!imageUrl) throw new Error('图像 API 已响应，但没有返回可显示的图片。')
   }
 
-  return imageResult(body, config, feature, imageUrl, aspectRatio, imageSize, useGemini, originalImageUrl)
+  return imageResult(body, config, feature, imageUrl, aspectRatio, imageSize, useGemini, user.id, originalImageUrl)
 }
 
 Deno.serve(async (req: Request) => {
@@ -930,6 +1060,7 @@ Deno.serve(async (req: Request) => {
     const body = await req.json()
     if (body.action === 'capabilities') return json(await capabilities(), 200, req)
     if (body.action === 'image-task-status') return json(await pollImageTask(body, user), 200, req)
+    if (body.action === 'persist-artifact') return json(await persistRemoteArtifact(body, user), 200, req)
     const feature = String(body.feature || '')
     if (feature === 'render' || feature === 'beautify') return json(await generateImage(body, user), 200, req)
     return json(await generateStructured(body), 200, req)

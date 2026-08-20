@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { prepareImageForStorage, storedImageName } from './asset-image.js'
+import { storeAssetArtifact } from './asset-persistence.js'
 import { waitForImageTask } from './async-image-task.js'
 import { clearInvalidBrowserSession, validatedBrowserSession } from './session.js'
 
@@ -172,34 +173,85 @@ export async function updateMemo(id, content) {
 }
 
 async function imageUrlToBlob(imageUrl) {
-  const response = await fetch(imageUrl)
-  if (!response.ok) throw new Error(`生成图读取失败（${response.status}）`)
-  return response.blob()
+  try {
+    const response = await fetch(imageUrl)
+    if (!response.ok) throw new Error(`生成图读取失败（${response.status}）`)
+    return response.blob()
+  } catch (error) {
+    if (/^https:\/\//i.test(String(imageUrl || '')) && /fetch|network|load failed/i.test(String(error?.message || error))) {
+      throw new Error('生成图服务禁止浏览器跨域读取，已停止直接上传。请刷新页面重新生成后再保存。')
+    }
+    throw error
+  }
 }
 
 function safeFileName(value) {
   return value.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'generated-image'
 }
 
+function isRetryableStorageError(error) {
+  const status = Number(error?.statusCode || error?.status || 0)
+  const message = String(error?.message || error || '')
+  return status === 408 || status === 429 || status >= 500 || /fetch|network|timeout|load failed|暂时|（50[234]）/i.test(message)
+}
+
+async function retryIdempotent(operation, attempts = 3) {
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation()
+    } catch (error) {
+      lastError = error
+      if (attempt === attempts || !isRetryableStorageError(error)) throw error
+      await new Promise((resolve) => setTimeout(resolve, 350 * (2 ** (attempt - 1))))
+    }
+  }
+  throw lastError
+}
+
+async function uploadArtifactBlob(client, objectPath, blob) {
+  return retryIdempotent(async () => unwrap(await client.storage.from('user-assets').upload(objectPath, blob, {
+    contentType: blob.type || 'image/png',
+    upsert: true,
+  })))
+}
+
+async function persistRemoteArtifact({ artifact, packageId, storedName }) {
+  return retryIdempotent(() => invokeGenerateFunction(requireClient(), {
+    action: 'persist-artifact',
+    imageUrl: artifact.imageUrl,
+    assetToken: artifact.assetToken || '',
+    packageId,
+    fileName: storedName,
+  }))
+}
+
 export async function persistAsset(asset) {
   const user = await currentUser()
   const client = requireClient()
   const packageId = crypto.randomUUID()
+  const assetId = crypto.randomUUID()
   const uploadedPaths = []
 
   try {
     const artifacts = []
     for (const [index, artifact] of (asset.artifacts || []).entries()) {
       if (!artifact.imageUrl) continue
-      const sourceBlob = await imageUrlToBlob(artifact.imageUrl)
-      const blob = await prepareImageForStorage(sourceBlob)
       const baseName = safeFileName(artifact.name || `generated-${index + 1}`)
-      const storedName = storedImageName(baseName, blob.type)
-      const objectPath = `${user.id}/${packageId}/${storedName}`
-      unwrap(await client.storage.from('user-assets').upload(objectPath, blob, {
-        contentType: blob.type || 'image/png',
-        upsert: false,
-      }))
+      const persisted = await storeAssetArtifact(
+        { artifact, packageId, baseName },
+        {
+          userId: user.id,
+          persistRemote: persistRemoteArtifact,
+          imageUrlToBlob,
+          prepareImageForStorage,
+          storedImageName,
+          uploadBlob: (objectPath, blob) => uploadArtifactBlob(client, objectPath, blob),
+        },
+      )
+      const storedName = persisted.fileName
+      const objectPath = persisted.storagePath
+
       uploadedPaths.push(objectPath)
       artifacts.push({
         id: artifact.id || index + 1,
@@ -210,7 +262,8 @@ export async function persistAsset(asset) {
       })
     }
 
-    const row = unwrap(await client.from('assets').insert({
+    const row = await retryIdempotent(async () => unwrap(await client.from('assets').upsert({
+      id: assetId,
       user_id: user.id,
       title: asset.title,
       asset_type: asset.type,
@@ -219,10 +272,16 @@ export async function persistAsset(asset) {
       tone: asset.tone,
       artifacts,
       result_data: stripLargeImagePayload(asset.resultData),
-    }).select().single())
+    }, { onConflict: 'id' }).select().single()))
     return mapAsset(row)
   } catch (error) {
-    if (uploadedPaths.length) await client.storage.from('user-assets').remove(uploadedPaths)
+    if (uploadedPaths.length) {
+      try {
+        await retryIdempotent(async () => unwrap(await client.storage.from('user-assets').remove(uploadedPaths)))
+      } catch (cleanupError) {
+        console.error('资产保存回滚失败', cleanupError)
+      }
+    }
     throw error
   }
 }
@@ -240,7 +299,7 @@ function stripLargeImagePayload(result) {
   return {
     ...rest,
     originalImageUrl: originalImageUrl ? '[session-only-upload-removed]' : undefined,
-    images: images.map(({ imageUrl: _imageUrl, ...image }) => image),
+    images: images.map(({ imageUrl: _imageUrl, assetToken: _assetToken, ...image }) => image),
   }
 }
 

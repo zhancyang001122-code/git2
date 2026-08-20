@@ -73,3 +73,13 @@ test('上游生图错误保留真实原因并映射网关状态', () => {
   assert.match(source, /图生图服务请求失败（上游 \$\{response\.status\}）/)
   assert.match(source, /response\.status >= 500 \? 502 : 400/)
 })
+
+test('远程生成图通过带用户签名的 Edge Function 写入私有资产桶', () => {
+  assert.match(source, /action === 'persist-artifact'/)
+  assert.match(source, /signRemoteArtifact\(imageUrl, userId\)/)
+  assert.match(source, /authorizeRemoteArtifact\(imageUrl, user\.id, assetToken\)/)
+  assert.match(source, /image_url=eq\.\$\{encodeURIComponent\(imageUrl\)\}/)
+  assert.match(source, /storagePath = `\$\{user\.id\}\/\$\{packageId\}\/\$\{fileName\}`/)
+  assert.match(source, /'x-upsert': 'true'/)
+  assert.match(source, /ASSET_MAX_BYTES = 40 \* 1024 \* 1024/)
+})
