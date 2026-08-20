@@ -19,6 +19,34 @@ test('Gemini 图生图按服务商协议发送角色、参考图和可选原图�
   assert.match(source, /supportsOriginalRatio: true/)
 })
 
+test('第二路 4K Gemini 使用 URL 响应，避免 Edge Function 承载超大 base64', () => {
+  assert.match(source, /responseMode: 'url'/)
+  assert.match(source, /ARCHFLOW_IMAGE_\(\[1-9\]\\d\*\)_\(\?:LABEL\|BASE_URL\|MODEL\|API_KEY\|API_KEY_SECRET\|PROTOCOL\|RESPONSE_MODE/)
+  assert.match(source, /responseModalities: \[config\.responseMode === 'url' \? 'TEXT' : 'IMAGE'\]/)
+  assert.match(source, /part\.fileData \|\| part\.file_data/)
+  assert.match(source, /fileData\?\.fileUri \|\| fileData\?\.file_uri/)
+})
+
+test('长耗时 4K 请求转为服务端后台任务并由前端轮询', () => {
+  assert.match(source, /createManagedImageTask\(user\.id, slot\)/)
+  assert.match(source, /EdgeRuntime\.waitUntil\(runManagedGeminiTask/)
+  assert.match(source, /image_generation_tasks/)
+  assert.match(source, /const managedTask = await managedImageTask\(taskId, user\.id\)/)
+  assert.match(source, /managedTask\.status === 'completed'/)
+  assert.match(source, /managedTask\.status === 'failed'/)
+  assert.match(source, /expires_at=lt\./)
+})
+
+test('CORS 允许当前 Supabase 客户端的重试与链路追踪请求头', () => {
+  assert.match(source, /x-retry-count, traceparent, tracestate, baggage/)
+  assert.match(source, /GET, POST, PUT, PATCH, DELETE, OPTIONS/)
+  assert.match(source, /req\.headers\.get\('Access-Control-Request-Headers'\)/)
+  assert.match(source, /headers: preflightCorsHeaders\(req\)/)
+  assert.match(source, /Access-Control-Allow-Credentials': 'true'/)
+  assert.match(source, /Access-Control-Request-Private-Network/)
+  assert.match(source, /origin === 'https:\/\/archflow\.zaneyang\.xyz'/)
+})
+
 test('按 ARCHFLOW_IMAGE_N_* 自动发现后续生图 API', () => {
   assert.match(source, /Object\.keys\(Deno\.env\.toObject\(\)\)/)
   assert.match(source, /ARCHFLOW_IMAGE_\(\[1-9\]\\d\*\)_/)
