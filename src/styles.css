@@ -394,3 +394,10 @@ kbd { padding: 2px 6px; border: 1px solid currentColor; border-radius: 5px; font
 @supports not (backdrop-filter: blur(1px)) {
   .sidebar,.topbar,.glass-panel { background: rgba(241,248,249,.96); }
 }
+
+.managed-model-list .is-warning {
+  border-color: rgba(204,146,72,.28);
+  background: rgba(255,248,232,.58);
+}
+
+.managed-model-list .is-warning em { color: #a16d34; }

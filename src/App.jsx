@@ -57,6 +57,7 @@ import {
   updateMemo,
 } from './lib/supabase.js'
 import { formatElapsedTime } from './lib/time.js'
+import { imageModeConnection, imageModeOptionLabel, isImageModeSelectable } from './lib/image-mode-status.js'
 import { originalImageOutputSize } from './lib/image-output-size.js'
 import { isInvalidSessionError } from './lib/session.js'
 import { loadWorkspaceAndCapabilities } from './lib/workspace-loader.js'
@@ -545,7 +546,7 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
   const activeRef = useRef(active)
   const scrollOnReveal = useRef(false)
   const usesImageModel = ['beautify', 'render'].includes(feature.id)
-  const renderImageModes = imageModes.length ? imageModes : [{ id: 'demo', label: '本地演示', model: '未连接 API', maxSize: '4K', supportsCustomSize: true }]
+  const renderImageModes = imageModes.length ? imageModes : [{ id: 'demo', label: '本地演示', model: '未连接 API', maxSize: '4K', supportsCustomSize: true, connected: false, connectionStatus: 'warning' }]
   const activeImageMode = renderImageModes.find((mode) => mode.id === imageMode) || renderImageModes[0]
   const availableImageFrameOptions = imageFrameOptions.filter((frame) => !frame.requiresCustomSize || activeImageMode?.supportsCustomSize)
   const activeFrame = availableImageFrameOptions.find((frame) => frame.id === imageFrame) || availableImageFrameOptions[0]
@@ -782,7 +783,7 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
           <div className="composer-footer">
             <span><Cloud /> {managed ? '项目资料仍为临时附件 · 生成记录登录后云端保留' : '当前标签页内存 · 切换栏目不中断，刷新后释放'}</span>
             <div className="composer-actions">
-              {usesImageModel && <label className={`image-mode-picker ${renderImageModes.length === 1 ? 'is-locked' : ''}`}><span><ImagePlus /> 生图模型</span><select aria-label="选择生图模型" value={imageMode} onChange={(event) => setImageMode(event.target.value)} disabled={loading || renderImageModes.length === 1}>{renderImageModes.map((mode) => <option value={mode.id} key={mode.id}>{mode.label} · {mode.model}{mode.maxSize ? ` · 最高 ${mode.maxSize}` : ''}</option>)}</select></label>}
+              {usesImageModel && <label className={`image-mode-picker ${renderImageModes.length === 1 ? 'is-locked' : ''}`}><span><ImagePlus /> 生图模型</span><select aria-label="选择生图模型" value={imageMode} onChange={(event) => setImageMode(event.target.value)} disabled={loading || renderImageModes.length === 1}>{renderImageModes.map((mode) => <option value={mode.id} key={mode.id} disabled={!isImageModeSelectable(mode)}>{imageModeOptionLabel(mode)}</option>)}</select></label>}
               {usesImageModel && <label className="image-mode-picker image-frame-picker"><span><SlidersHorizontal /> 输出图幅</span><select aria-label="选择输出图幅" value={imageFrame} onChange={(event) => setImageFrame(event.target.value)} disabled={loading}>{availableImageFrameOptions.map((frame) => <option value={frame.id} key={frame.id}>{frame.label}</option>)}{activeImageMode?.supportsCustomSize && <option value="custom">自定义宽 × 高</option>}</select></label>}
               {usesImageModel && imageFrame === 'custom' && activeImageMode?.supportsCustomSize && <div className="custom-image-size" aria-label="自定义输出图幅"><label><span>宽</span><input type="number" min="64" max="4096" step="1" inputMode="numeric" value={customImageWidth} onChange={(event) => setCustomImageWidth(event.target.value)} disabled={loading} /></label><b>×</b><label><span>高</span><input type="number" min="64" max="4096" step="1" inputMode="numeric" value={customImageHeight} onChange={(event) => setCustomImageHeight(event.target.value)} disabled={loading} /></label></div>}
               <button className="button button-primary generate-button" onClick={handleGenerate} disabled={loading}>
@@ -1326,10 +1327,13 @@ function ManagedApiDialog({ closeRef, onClose, managedModels }) {
         <span className="dialog-symbol is-info"><BrainCircuit /></span><span className="eyebrow">SERVER MANAGED MODELS</span><h2 id="managed-api-title">内部账号模型配置</h2><p>密钥只保存在 Supabase Edge Function Secrets，不会显示或写入浏览器。</p>
         <div className="managed-model-list">
           <article className={managedModels.languageReady ? 'is-ready' : 'is-missing'}><span><BrainCircuit /></span><p><strong>语言大模型</strong><small>{managedModels.languageReady ? managedModels.languageModel : '等待管理员配置'}</small></p><em>{managedModels.languageReady ? <><Check /> 已连接</> : <><Info /> 未配置</>}</em></article>
-          {managedModels.imageModes.map((mode, index) => <article className="is-ready" key={mode.id}><span><ImagePlus /></span><p><strong>生图大模型 {index + 1}</strong><small>{mode.label} · {mode.model}{mode.maxSize ? ` · 最高 ${mode.maxSize}` : ''}</small></p><em><Check /> 已连接</em></article>)}
+          {managedModels.imageModes.map((mode, index) => {
+            const connection = imageModeConnection(mode)
+            return <article className={connection.className} key={mode.id}><span><ImagePlus /></span><p><strong>生图大模型 {index + 1}</strong><small>{mode.label} · {mode.model}{mode.maxSize ? ` · 最高 ${mode.maxSize}` : ''}</small><small>{connection.message}</small></p><em>{connection.status === 'connected' ? <Check /> : <Info />} {connection.label}</em></article>
+          })}
           {!managedModels.imageModes.length && <article className="is-missing"><span><ImagePlus /></span><p><strong>生图大模型</strong><small>等待管理员配置</small></p><em><Info /> 未配置</em></article>}
         </div>
-        <div className="privacy-note"><BadgeCheck /><p><strong>{modelCount} 个服务端模型可用</strong><small>内部账号无需自行填写 API Key；访客演示的本地 Key 配置与此处完全分开。</small></p></div>
+        <div className="privacy-note"><BadgeCheck /><p><strong>{modelCount} 个服务端模型已注册</strong><small>内部账号无需自行填写 API Key；每路生图 API 的实时连接检测结果见上方。</small></p></div>
         <div className="dialog-actions"><button className="button button-primary" onClick={onClose}>完成 <Check /></button></div>
       </section>
     </div>

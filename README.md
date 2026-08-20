@@ -56,27 +56,29 @@ pnpm build
 - AI 渲染要求上传一张白模或原始效果图：OpenAI/NewAPI 通道请求 `/images/edits`，只有显式配置为原生 Gemini 协议的模型才请求 `/v1beta/models/{model}:generateContent`，并只返回一张图用于前后对比；
 - 其余三个模块保持高质量本地演示，不伪装成真实 API 结果。
 
-### 内部账号第二生图 API
+### 内部账号生图 API 自动注册
 
-`内部账户1` 的模型密钥由 Supabase Edge Function 托管，不需要也不应填写到访客的“API Key 配置”中。进入 Supabase Dashboard 的 **Edge Functions → Secrets**，为第二个生图服务添加以下变量：
+`内部账户1` 的模型密钥由 Supabase Edge Function 托管，不需要也不应填写到访客的“API Key 配置”中。Edge Function 会自动发现 `ARCHFLOW_IMAGE_N_*` 槽位；新增第 3、4 路 API 时只需把下面的 `2` 改成对应编号，无需再改前端或后端代码：
 
 ```text
 ARCHFLOW_IMAGE_2_LABEL=Git2 图 Gemini
 ARCHFLOW_IMAGE_2_BASE_URL=https://img.yunfei.best
 ARCHFLOW_IMAGE_2_MODEL=git2图gemini
-ARCHFLOW_IMAGE_2_API_KEY=真实 API Key
+ARCHFLOW_IMAGE_2_API_KEY_SECRET=git2图gemini
 ARCHFLOW_IMAGE_2_PROTOCOL=openai
 ARCHFLOW_IMAGE_2_SIZE=4K
 ARCHFLOW_IMAGE_2_QUALITY=high
 ```
 
-当前部署也兼容已经存在的自定义 Secret 名称：
+`ARCHFLOW_IMAGE_2_API_KEY_SECRET` 的值是另一个 Secret 的名称；当前部署中的真实 Key 继续保存在：
 
 ```text
 git2图gemini=真实 API Key
 ```
 
-`git2图gemini` 虽然模型名包含 `gemini`，但由 NewAPI 通道提供，因此必须显式使用 `openai` 协议；否则 `auto` 会把它误判为原生 Gemini `generateContent`。两个内部生图槽位都支持常用横图、竖图、方图、64–4096 像素自定义宽高，以及“跟随原图比例”：浏览器读取参考图宽高后保持比例，并把最长边换算为 3840 像素。`ARCHFLOW_IMAGE_*_SIZE` 只作为未传入本次图幅时的服务端默认值。保存 Secrets 后无需重新部署 Edge Function，刷新 ArchFlow 或重新登录内部账号即可重新读取可用模型。只有通过 `/v1/models` 连通性检查且返回准确模型 ID 的 API 才会出现在“生图模型”选择器中。生成期间界面显示所选服务、模型、最高分辨率及从 `00:00` 开始累计的已等待时间。
+也可以不使用引用名，直接设置标准的 `ARCHFLOW_IMAGE_2_API_KEY=真实 API Key`。`git2图gemini` 虽然模型名包含 `gemini`，但由 NewAPI 通道提供，因此必须显式使用 `openai` 协议；否则 `auto` 会把它误判为原生 Gemini `generateContent`。
+
+所有内部生图槽位都支持常用横图、竖图、方图、64–4096 像素自定义宽高，以及“跟随原图比例”：浏览器读取参考图宽高后保持比例，并把最长边换算为 3840 像素。`ARCHFLOW_IMAGE_*_SIZE` 只作为未传入本次图幅时的服务端默认值。保存 Secrets 后无需重新部署 Edge Function，刷新 ArchFlow 或重新登录内部账号即可自动读取全部槽位。连接检测不再隐藏 API，而是在模型选择器和“内部账号模型配置”中显示“已连接 / 待实测 / 检测失败 / 配置不完整”；生成期间界面显示所选服务、模型、最高分辨率及从 `00:00` 开始累计的已等待时间。
 
 API Key 仅写入 `sessionStorage`，关闭标签页后清除，不会进入源码、构建产物或 Git。浏览器直连接口仍要求网络可访问服务商并允许 CORS；正式产品必须改为服务端代理。
 
