@@ -9,7 +9,7 @@ const corsHeaders = {
 type Attachment = { name: string; mimeType: string; data: string }
 
 type ImageConfig = {
-  id: 'image1' | 'image2'
+  id: string
   label: string
   baseUrl: string
   model: string
@@ -17,6 +17,13 @@ type ImageConfig = {
   protocol: string
   size: string
   quality: string
+}
+
+type ImageConnection = {
+  connected: boolean
+  status: 'connected' | 'warning' | 'error' | 'not_configured'
+  reason: string
+  httpStatus?: number
 }
 
 class HttpError extends Error {
@@ -47,30 +54,64 @@ function languageConfig() {
   }
 }
 
-function secondImageModel() {
-  return env('ARCHFLOW_IMAGE_2_MODEL') || 'git2图gemini'
+function imageSlotNumber(slot: string) {
+  const match = /^image([1-9]\d*)$/.exec(slot)
+  return match ? Number(match[1]) : 1
 }
 
-function imageConfig(slot: 'image1' | 'image2'): ImageConfig {
-  const prefix = slot === 'image1' ? 'ARCHFLOW_IMAGE_1' : 'ARCHFLOW_IMAGE_2'
+function normalizeImageSlot(value: unknown) {
+  const slot = String(value || '')
+  return /^image[1-9]\d*$/.test(slot) ? slot : 'image1'
+}
+
+function legacyImageDefaults(slotNumber: number) {
+  if (slotNumber === 1) {
+    return {
+      label: '第三方生图服务',
+      baseUrl: 'https://img.yunfei.best',
+      model: 'gpt-image-2',
+      apiKey: env('生图api 4k'),
+      protocol: 'auto',
+    }
+  }
+  if (slotNumber === 2) {
+    return {
+      label: 'Git2 图 Gemini',
+      baseUrl: 'https://img.yunfei.best',
+      model: 'git2图gemini',
+      apiKey: env('git2图gemini'),
+      protocol: 'openai',
+    }
+  }
+  return { label: `内置生图 API ${slotNumber}`, baseUrl: '', model: '', apiKey: '', protocol: 'openai' }
+}
+
+function imageConfig(slot: string): ImageConfig {
+  const slotNumber = imageSlotNumber(slot)
+  const prefix = `ARCHFLOW_IMAGE_${slotNumber}`
+  const defaults = legacyImageDefaults(slotNumber)
+  const apiKeySecretName = env(`${prefix}_API_KEY_SECRET`)
   return {
     id: slot,
-    label: env(`${prefix}_LABEL`) || (slot === 'image1' ? '第三方生图服务' : 'Git2 图 Gemini'),
-    baseUrl: env(`${prefix}_BASE_URL`) || (slot === 'image1'
-      ? 'https://img.yunfei.best'
-      : 'https://img.yunfei.best'),
-    model: slot === 'image1'
-      ? env(`${prefix}_MODEL`) || 'gpt-image-2'
-      : secondImageModel(),
-    apiKey: env(`${prefix}_API_KEY`) || (slot === 'image1'
-      ? env('生图api 4k')
-      : env('git2图gemini')),
-    // The second model is delivered through a NewAPI channel. Its name
-    // contains "gemini", so it must not be auto-detected as native Gemini.
-    protocol: env(`${prefix}_PROTOCOL`) || (slot === 'image1' ? 'auto' : 'openai'),
+    label: env(`${prefix}_LABEL`) || defaults.label,
+    baseUrl: env(`${prefix}_BASE_URL`) || defaults.baseUrl,
+    model: env(`${prefix}_MODEL`) || defaults.model,
+    apiKey: env(`${prefix}_API_KEY`) || (apiKeySecretName ? env(apiKeySecretName) : defaults.apiKey),
+    protocol: env(`${prefix}_PROTOCOL`) || defaults.protocol,
     size: env(`${prefix}_SIZE`) || '4K',
     quality: env(`${prefix}_QUALITY`) || 'high',
   }
+}
+
+function imageConfigs() {
+  const declaredSlots = new Set<number>([1, 2])
+  for (const name of Object.keys(Deno.env.toObject())) {
+    const match = /^ARCHFLOW_IMAGE_([1-9]\d*)_(?:LABEL|BASE_URL|MODEL|API_KEY|API_KEY_SECRET|PROTOCOL|SIZE|QUALITY)$/.exec(name)
+    if (match) declaredSlots.add(Number(match[1]))
+  }
+  return [...declaredSlots]
+    .sort((left, right) => left - right)
+    .map((slotNumber) => imageConfig(`image${slotNumber}`))
 }
 
 function isReady(config: { baseUrl: string; model: string; apiKey: string }) {
@@ -112,10 +153,23 @@ async function checkLanguageConnection(config: ReturnType<typeof languageConfig>
   }
 }
 
-async function checkImageConnection(config: ImageConfig) {
+function imageConnectionMessage(connection: ImageConnection) {
+  if (connection.status === 'connected') return '模型列表验证通过'
+  if (connection.status === 'not_configured') return '配置不完整'
+  if (connection.reason === 'model_missing') return '服务可连接，但模型未出现在模型列表中，可继续实测生图'
+  if (connection.reason === 'model_list_empty') return '服务可连接，但模型列表为空，可继续实测生图'
+  if (connection.reason === 'auth_failed') return '密钥无效或无权访问模型列表'
+  if (connection.reason === 'quota_exhausted') return '额度不足或已用完'
+  if (connection.reason === 'rate_limited') return '连接检测触发限流，请稍后重试'
+  if (connection.reason === 'model_list_unsupported') return '服务未开放模型列表接口，可继续实测生图'
+  if (connection.reason === 'timeout') return '连接检测超时'
+  return '服务连接检测失败'
+}
+
+async function checkImageConnection(config: ImageConfig): Promise<ImageConnection> {
   if (!isReady(config)) {
     console.warn(JSON.stringify({ event: 'image_connection_check', slot: config.id, connected: false, reason: 'not_configured' }))
-    return false
+    return { connected: false, status: 'not_configured', reason: 'not_configured' }
   }
   try {
     const useNativeGeminiListing = config.protocol === 'gemini'
@@ -123,11 +177,22 @@ async function checkImageConnection(config: ImageConfig) {
       ? `${rootWithoutApiVersion(config.baseUrl)}/v1beta/models`
       : `${rootWithoutApiVersion(config.baseUrl)}/v1/models`
     const response = await fetch(endpoint, {
+      signal: AbortSignal.timeout(8000),
       headers: useNativeGeminiListing
         ? { Authorization: `Bearer ${config.apiKey}`, 'x-goog-api-key': config.apiKey }
         : { Authorization: `Bearer ${config.apiKey}` },
     })
     if (!response.ok) {
+      const reason = response.status === 401 || response.status === 403
+        ? 'auth_failed'
+        : response.status === 402
+          ? 'quota_exhausted'
+          : response.status === 429
+            ? 'rate_limited'
+            : response.status === 404 || response.status === 405
+              ? 'model_list_unsupported'
+              : 'provider_rejected_model_list'
+      const status = reason === 'model_list_unsupported' ? 'warning' : 'error'
       console.warn(JSON.stringify({
         event: 'image_connection_check',
         slot: config.id,
@@ -135,9 +200,9 @@ async function checkImageConnection(config: ImageConfig) {
         protocol: config.protocol,
         connected: false,
         status: response.status,
-        reason: 'provider_rejected_model_list',
+        reason,
       }))
-      return false
+      return { connected: false, status, reason, httpStatus: response.status }
     }
     const payload = await response.json()
     const modelIds = Array.isArray(payload.data)
@@ -145,7 +210,9 @@ async function checkImageConnection(config: ImageConfig) {
       : Array.isArray(payload.models)
         ? payload.models.map((item: Record<string, unknown>) => String(item.name || '').replace(/^models\//, '')).filter(Boolean)
         : []
-    const connected = modelIds.length === 0 || modelIds.includes(config.model)
+    const connected = modelIds.includes(config.model)
+    const reason = connected ? 'ok' : modelIds.length === 0 ? 'model_list_empty' : 'model_missing'
+    const status = connected ? 'connected' : 'warning'
     console.info(JSON.stringify({
       event: 'image_connection_check',
       slot: config.id,
@@ -153,41 +220,47 @@ async function checkImageConnection(config: ImageConfig) {
       protocol: config.protocol,
       connected,
       status: response.status,
-      reason: connected ? 'ok' : 'model_missing',
+      reason,
     }))
-    return connected
-  } catch {
+    return { connected, status, reason, httpStatus: response.status }
+  } catch (error) {
+    const reason = error instanceof DOMException && error.name === 'TimeoutError' ? 'timeout' : 'network_error'
     console.warn(JSON.stringify({
       event: 'image_connection_check',
       slot: config.id,
       model: config.model,
       protocol: config.protocol,
       connected: false,
-      reason: 'network_error',
+      reason,
     }))
-    return false
+    return { connected: false, status: 'error', reason }
   }
 }
 
 async function capabilities() {
   const llm = languageConfig()
-  const configuredImages = [imageConfig('image1'), imageConfig('image2')]
+  const configuredImages = imageConfigs()
   const [languageReady, ...imageConnections] = await Promise.all([
     checkLanguageConnection(llm),
     ...configuredImages.map(checkImageConnection),
   ])
-  const images = configuredImages.filter((_config, index) => imageConnections[index])
   return {
     languageReady,
     languageModel: languageReady ? llm.model : null,
-    imageModes: images.map((config) => {
+    imageModes: configuredImages.map((config, index) => {
       const usesGeminiSizing = config.protocol === 'gemini' || (config.protocol === 'auto' && looksLikeGemini(config.model))
+      const connection = imageConnections[index]
       return {
         id: config.id,
         label: config.label,
         model: config.model,
-        maxSize: '4K',
+        maxSize: config.size || '4K',
         supportsCustomSize: !usesGeminiSizing,
+        configured: isReady(config),
+        connected: connection.connected,
+        connectionStatus: connection.status,
+        connectionReason: connection.reason,
+        connectionMessage: imageConnectionMessage(connection),
       }
     }),
   }
@@ -522,7 +595,7 @@ function imageResult(
 
 async function pollImageTask(body: Record<string, unknown>, user: { id: string }) {
   const feature = body.feature === 'beautify' ? 'beautify' : 'render'
-  const slot = body.imageSlot === 'image2' ? 'image2' : 'image1'
+  const slot = normalizeImageSlot(body.imageSlot)
   const config = imageConfig(slot)
   const useGemini = config.protocol === 'gemini' || (config.protocol === 'auto' && looksLikeGemini(config.model))
   if (!isReady(config) || !useGemini) throw new HttpError('当前生图服务不支持异步任务查询。', 400)
@@ -555,7 +628,7 @@ async function pollImageTask(body: Record<string, unknown>, user: { id: string }
 
 async function generateImage(body: Record<string, unknown>, user: { id: string }) {
   const feature = body.feature === 'beautify' ? 'beautify' : 'render'
-  const slot = body.imageSlot === 'image2' ? 'image2' : 'image1'
+  const slot = normalizeImageSlot(body.imageSlot)
   const config = imageConfig(slot)
   if (!isReady(config)) throw new Error(`${config.label} 尚未完成服务端配置。`)
   const attachment = ((Array.isArray(body.attachments) ? body.attachments : []) as Attachment[])[0]

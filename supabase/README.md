@@ -27,17 +27,18 @@ ARCHFLOW_IMAGE_1_MODEL
 ARCHFLOW_IMAGE_1_PROTOCOL
 ARCHFLOW_IMAGE_1_SIZE=4K
 
-# 第二个生图服务可选
+# 第二个及后续生图服务（N 可继续使用 3、4……）
 ARCHFLOW_IMAGE_2_LABEL
 ARCHFLOW_IMAGE_2_BASE_URL
 ARCHFLOW_IMAGE_2_MODEL
 ARCHFLOW_IMAGE_2_API_KEY
+ARCHFLOW_IMAGE_2_API_KEY_SECRET
 ARCHFLOW_IMAGE_2_PROTOCOL=openai
 ARCHFLOW_IMAGE_2_SIZE=4K
 ```
 
-当前第二路 NewAPI 配置为 `https://img.yunfei.best`、模型 `git2图gemini`、协议 `openai`；现有部署中的同名 Secret `git2图gemini` 会作为 API Key 读取。后续轮换时优先改用标准名称 `ARCHFLOW_IMAGE_2_API_KEY`。
+当前第二路 NewAPI 配置为 `https://img.yunfei.best`、模型 `git2图gemini`、协议 `openai`。可以直接使用 `ARCHFLOW_IMAGE_2_API_KEY`，也可以设置 `ARCHFLOW_IMAGE_2_API_KEY_SECRET=git2图gemini`，让槽位引用现有的自定义 Secret。Edge Function 会自动发现所有 `ARCHFLOW_IMAGE_N_*` 槽位，后续新增 API 不需要再修改代码。
 
-`ARCHFLOW_IMAGE_*_PROTOCOL` 可设为 `openai`、`gemini` 或 `auto`。NewAPI 模型即使名称包含 `gemini` 也必须显式设为 `openai`，否则 `auto` 会误选原生 Gemini 协议。`ARCHFLOW_IMAGE_*_SIZE` 是没有传入本次输出图幅时的默认值；前端可按次传入 64–4096 像素自定义宽高，或读取参考图比例并将最长边换算为 3840 像素。
+`ARCHFLOW_IMAGE_*_PROTOCOL` 可设为 `openai`、`gemini` 或 `auto`。NewAPI 模型即使名称包含 `gemini` 也必须显式设为 `openai`，否则 `auto` 会误选原生 Gemini 协议。`ARCHFLOW_IMAGE_*_SIZE` 是没有传入本次输出图幅时的默认值；前端可按次传入 64–4096 像素自定义宽高，或读取参考图比例并将最长边换算为 3840 像素。连接检测结果会随能力接口下发；检测失败的已配置槽位仍会显示，避免把“连接异常”误表现为“没有安装”。
 
 这些 Key 只能放在 Supabase Secrets 中，不能使用 `VITE_` 前缀，也不能提交到 Git。
