@@ -14,9 +14,18 @@ test('第二路 NewAPI 使用独立密钥、真实模型和 Gemini 原生图生�
 
 test('Gemini 图生图按服务商协议发送角色、参考图和可选原图比例', () => {
   assert.match(source, /contents: \[\{ role: 'user', parts:/)
-  assert.match(source, /inline_data: \{ mime_type: attachment\.mimeType, data: attachment\.data \}/)
+  assert.match(source, /inlineData: \{ mimeType: attachment\.mimeType, data: attachment\.data \}/)
+  assert.doesNotMatch(source, /\{ inline_data: \{ mime_type: attachment\.mimeType/)
   assert.match(source, /if \(aspectRatio\) imageConfigPayload\.aspectRatio = aspectRatio/)
   assert.match(source, /supportsOriginalRatio: true/)
+})
+
+test('生产健康检查以最小无敏感图片验证 Gemini 请求协议', () => {
+  assert.match(source, /HEALTH_CHECK_PNG_BASE64/)
+  assert.match(source, /geminiGenerationPayload\([\s\S]*?responseMode: 'url', size: '1K'/)
+  assert.match(source, /appMetadata\?\.role !== 'health_monitor'/)
+  assert.match(source, /body\.action === 'health'/)
+  assert.match(source, /protocolChecks\.every\(\(check\) => check\.connected\)/)
 })
 
 test('第二路 4K Gemini 使用 URL 响应，避免 Edge Function 承载超大 base64', () => {
