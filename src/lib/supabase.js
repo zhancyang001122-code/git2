@@ -315,16 +315,51 @@ export async function recordGeneration({ feature, prompt, result }) {
   }))
 }
 
-function fileToAttachment(file) {
+function readAttachmentBlob(blob, name, mimeType) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onerror = () => reject(new Error(`无法读取 ${file.name}`))
+    reader.onerror = () => reject(new Error(`无法读取 ${name}`))
     reader.onload = () => {
       const [, data = ''] = String(reader.result).split(',', 2)
-      resolve({ name: file.name, mimeType: file.type || 'application/octet-stream', data })
+      resolve({ name, mimeType, data })
     }
-    reader.readAsDataURL(file)
+    reader.readAsDataURL(blob)
   })
+}
+
+async function fileToAttachment(file) {
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+    throw new Error(`${file.name} 不是受支持的 PNG、JPG 或 WEBP 图片。`)
+  }
+  if (file.size > 15 * 1024 * 1024) throw new Error(`${file.name} 超过 15MB，请压缩后再使用。`)
+  if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') {
+    return readAttachmentBlob(file, file.name, file.type)
+  }
+
+  let bitmap
+  try {
+    bitmap = await createImageBitmap(file)
+    const maxDimension = 2048
+    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+    const context = canvas.getContext('2d', { alpha: false })
+    if (!context) throw new Error('浏览器无法创建图片转换画布。')
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    const blob = await new Promise((resolve, reject) => canvas.toBlob(
+      (value) => value ? resolve(value) : reject(new Error('图片标准化失败。')),
+      'image/jpeg',
+      0.92,
+    ))
+    return readAttachmentBlob(blob, file.name.replace(/\.[^.]+$/, '') + '.jpg', 'image/jpeg')
+  } catch (error) {
+    throw new Error(`${file.name} 无法解码为标准图片，请先另存为 JPG 后重试：${error instanceof Error ? error.message : '图片解码失败'}`)
+  } finally {
+    bitmap?.close?.()
+  }
 }
 
 async function cloudFunctionErrorMessage(error) {
@@ -359,7 +394,7 @@ export async function generateWithCloudApi({ feature, prompt, files = [], option
     prompt,
     fileNames,
     attachments,
-    imageSlot,
+    imageSlot: task.imageSlot || imageSlot,
     imageSize: options.imageSize,
     imageAspectRatio: options.imageAspectRatio,
   }

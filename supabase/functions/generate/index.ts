@@ -568,6 +568,26 @@ function decodeBase64(data: string) {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0))
 }
 
+function normalizeInputAttachment(attachment: Attachment) {
+  let bytes: Uint8Array
+  try {
+    bytes = decodeBase64(attachment.data)
+  } catch {
+    throw new HttpError('参考图数据损坏，请重新选择图片。', 400)
+  }
+  if (!bytes.length) throw new HttpError('上传的参考图为空，请重新选择图片。', 400)
+  if (bytes.length > 15 * 1024 * 1024) throw new HttpError('渲染参考图超过 15MB，请压缩后重新上传。', 413)
+  let mimeType = ''
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) mimeType = 'image/png'
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) mimeType = 'image/jpeg'
+  if (String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP') mimeType = 'image/webp'
+  if (!mimeType) throw new HttpError('参考图文件内容不是有效的 PNG、JPG 或 WEBP，请另存为 JPG 后重试。', 415)
+  if (mimeType !== attachment.mimeType) {
+    console.warn(JSON.stringify({ event: 'input_image_mime_normalized', declared: attachment.mimeType, detected: mimeType, bytes: bytes.length }))
+  }
+  return { ...attachment, mimeType }
+}
+
 function encodeBase64(bytes: Uint8Array) {
   let binary = ''
   const chunkSize = 0x8000
@@ -1044,13 +1064,14 @@ async function pollImageTask(body: Record<string, unknown>, user: { id: string }
   return pendingImageTask(payload, config, user.id, slot)
 }
 
-async function generateImage(body: Record<string, unknown>, user: { id: string }) {
+async function generateImageWithSelectedProvider(body: Record<string, unknown>, user: { id: string }) {
   const feature = body.feature === 'beautify' ? 'beautify' : 'render'
   const slot = normalizeImageSlot(body.imageSlot)
   const config = imageConfig(slot)
   if (!isReady(config)) throw new Error(`${config.label} 尚未完成服务端配置。`)
-  const attachment = ((Array.isArray(body.attachments) ? body.attachments : []) as Attachment[])[0]
-  if (!attachment?.data) throw new Error(`${feature === 'beautify' ? 'AI 图纸美化' : 'AI 渲染'}需要先上传一张${feature === 'beautify' ? '原始图纸' : '白模或原始效果图'}。`)
+  const rawAttachment = ((Array.isArray(body.attachments) ? body.attachments : []) as Attachment[])[0]
+  if (!rawAttachment?.data) throw new Error(`${feature === 'beautify' ? 'AI 图纸美化' : 'AI 渲染'}需要先上传一张${feature === 'beautify' ? '原始图纸' : '白模或原始效果图'}。`)
+  const attachment = normalizeInputAttachment(rawAttachment)
   const originalImageUrl = imageDataUrl(attachment)
   const prompt = imagePrompt(feature, String(body.prompt || ''))
   const useGemini = config.protocol === 'gemini' || (config.protocol === 'auto' && looksLikeGemini(config.model))
@@ -1111,6 +1132,26 @@ async function generateImage(body: Record<string, unknown>, user: { id: string }
   }
 
   return imageResult(body, config, feature, imageUrl, aspectRatio, imageSize, useGemini, user.id, originalImageUrl)
+}
+
+async function generateImage(body: Record<string, unknown>, user: { id: string }) {
+  try {
+    return await generateImageWithSelectedProvider(body, user)
+  } catch (error) {
+    const selectedSlot = normalizeImageSlot(body.imageSlot)
+    const fallbackConfig = imageConfig('image2')
+    const transientProviderFailure = error instanceof HttpError && error.status === 502
+    if (selectedSlot !== 'image2' && transientProviderFailure && isReady(fallbackConfig)) {
+      console.warn(JSON.stringify({
+        event: 'image_provider_failover',
+        from: selectedSlot,
+        to: 'image2',
+        reason: error.message.slice(0, 300),
+      }))
+      return generateImageWithSelectedProvider({ ...body, imageSlot: 'image2' }, user)
+    }
+    throw error
+  }
 }
 
 Deno.serve(async (req: Request) => {

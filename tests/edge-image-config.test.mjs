@@ -48,6 +48,18 @@ test('长耗时 4K 请求转为服务端后台任务并由前端轮询', () => {
   assert.match(source, /expires_at=lt\./)
 })
 
+test('第一路供应商暂时不可用时自动切换到第二路生图', () => {
+  assert.match(source, /event: 'image_provider_failover'/)
+  assert.match(source, /selectedSlot !== 'image2' && transientProviderFailure/)
+  assert.match(source, /generateImageWithSelectedProvider\(\{ \.\.\.body, imageSlot: 'image2' \}, user\)/)
+})
+
+test('云端生图会校验真实图片类型而不是盲信浏览器 MIME', () => {
+  assert.match(source, /function normalizeInputAttachment\(attachment: Attachment\)/)
+  assert.match(source, /参考图文件内容不是有效的 PNG、JPG 或 WEBP/)
+  assert.match(source, /event: 'input_image_mime_normalized'/)
+})
+
 test('CORS 允许当前 Supabase 客户端的重试与链路追踪请求头', () => {
   assert.match(source, /x-retry-count, traceparent, tracestate, baggage/)
   assert.match(source, /GET, POST, PUT, PATCH, DELETE, OPTIONS/)
