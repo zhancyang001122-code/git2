@@ -86,15 +86,15 @@ API Key 仅写入 `sessionStorage`，关闭标签页后清除，不会进入源�
 
 ## 公开部署
 
-生产站点已连接 Vercel 与 GitHub。推送 `main` 后会执行自动生产构建，正式地址为：
+生产站点当前由 GitHub Pages 托管。推送 `main` 后会执行测试、生产构建并自动发布，正式地址为：
 
 [`https://archflow.zaneyang.xyz/`](https://archflow.zaneyang.xyz/)
 
-GitHub Pages 同时保留为静态备用地址：
+GitHub Pages 的仓库域名同时保留为静态备用入口：
 
 [`https://zhancyang001122-code.github.io/git2/`](https://zhancyang001122-code.github.io/git2/)
 
-`内部账户1` 使用 Supabase Auth，备忘录、生成记录和已保存资产可跨设备同步；模型密钥只保存在 Supabase Edge Function Secrets 中。Vercel 的 Production、Preview、Development 环境均配置公开的 Supabase URL、publishable key 与内部账户映射邮箱。代码还保留同一组公开配置作为构建兜底，避免部署平台漏配变量时静默关闭登录；任何服务端密钥都不得使用 `VITE_` 前缀或进入前端构建。
+`内部账户1` 使用 Supabase Auth，备忘录、生成记录和已保存资产可跨设备同步；模型密钥只保存在 Supabase Edge Function Secrets 中。GitHub Pages 的生产构建配置公开的 Supabase URL、publishable key 与内部账户映射邮箱。代码还保留同一组公开配置作为构建兜底，避免部署平台漏配变量时静默关闭登录；任何服务端密钥都不得使用 `VITE_` 前缀或进入前端构建。
 
 ## 面试演示路线
 

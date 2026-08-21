@@ -1,0 +1,90 @@
+name: ArchFlow Production Health Check
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: archflow-production-health
+  cancel-in-progress: true
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Run read-only health checks
+        id: health
+        continue-on-error: true
+        env:
+          ARCHFLOW_PUBLIC_URL: https://archflow.zaneyang.xyz/
+          ARCHFLOW_SUPABASE_URL: https://mblnorfsegteomazffwy.supabase.co
+          ARCHFLOW_SUPABASE_PUBLISHABLE_KEY: ${{ vars.ARCHFLOW_SUPABASE_PUBLISHABLE_KEY }}
+          ARCHFLOW_MONITOR_EMAIL: ${{ secrets.ARCHFLOW_MONITOR_EMAIL }}
+          ARCHFLOW_MONITOR_PASSWORD: ${{ secrets.ARCHFLOW_MONITOR_PASSWORD }}
+          ARCHFLOW_HEALTH_TIMEOUT_MS: 60000
+        run: node scripts/health-check.mjs | tee health-report.json
+
+      - name: Upload diagnostic report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: health-report-${{ github.run_id }}
+          path: health-report.json
+          retention-days: 14
+
+      - name: Open or update one incident issue
+        if: steps.health.outcome == 'failure'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const title = '[Ops] ArchFlow production health check failed'
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100,
+            })
+            const existing = issues.find((issue) => issue.title === title)
+            const body = `Health check failed in run ${context.runId}.\n\n${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            if (existing) {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: existing.number, body })
+            } else {
+              await github.rest.issues.create({ ...context.repo, title, body })
+            }
+
+      - name: Close resolved incident issue
+        if: steps.health.outcome == 'success'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const title = '[Ops] ArchFlow production health check failed'
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100,
+            })
+            const existing = issues.find((issue) => issue.title === title)
+            if (existing) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: existing.number,
+                body: `Production health checks recovered in run ${context.runId}. Closing this incident automatically.`,
+              })
+              await github.rest.issues.update({ ...context.repo, issue_number: existing.number, state: 'closed' })
+            }
+
+      - name: Fail workflow after diagnostics
+        if: steps.health.outcome == 'failure'
+        run: exit 1
