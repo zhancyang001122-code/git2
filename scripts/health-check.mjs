@@ -3,6 +3,7 @@
 const DEFAULT_PUBLIC_URL = 'https://archflow.zaneyang.xyz/'
 const DEFAULT_SUPABASE_URL = 'https://mblnorfsegteomazffwy.supabase.co'
 const DEFAULT_TIMEOUT_MS = 12_000
+const CANARY_TIMEOUT_MS = 8 * 60_000
 
 function normalizedBaseUrl(value) {
   return String(value || '').trim().replace(/\/+$/, '')
@@ -47,6 +48,88 @@ async function signInMonitor(supabaseUrl, publishableKey) {
   return payload.access_token
 }
 
+async function invokeGenerate(supabaseUrl, publishableKey, accessToken, body, timeoutMs = 180_000) {
+  const response = await fetch(`${supabaseUrl}/functions/v1/generate`, {
+    method: 'POST',
+    headers: {
+      apikey: publishableKey,
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok || payload?.error) {
+    throw new Error(String(payload?.error || `HTTP ${response.status}`).slice(0, 300))
+  }
+  return payload
+}
+
+async function realImageCanary({ publicUrl, supabaseUrl, publishableKey, accessToken, selectedSlot }) {
+  const startedAt = Date.now()
+  try {
+    const imageResponse = await fetch(`${publicUrl}/case-thumbnails/tank-shanghai.jpg`, {
+      signal: AbortSignal.timeout(30_000),
+    })
+    if (!imageResponse.ok) throw new Error(`canary_image_http_${imageResponse.status}`)
+    const attachment = {
+      name: 'archflow-canary.jpg',
+      mimeType: 'image/jpeg',
+      data: Buffer.from(await imageResponse.arrayBuffer()).toString('base64'),
+    }
+    let result = await invokeGenerate(supabaseUrl, publishableKey, accessToken, {
+      action: 'generate',
+      feature: 'render',
+      prompt: 'Production canary: preserve the architecture and create a clean daylight visualization.',
+      fileNames: [attachment.name],
+      attachments: [attachment],
+      imageSlot: selectedSlot,
+      imageSize: '1024x1024',
+      imageAspectRatio: '1:1',
+    })
+    const actualSlot = String(result.imageSlot || selectedSlot)
+    const deadline = Date.now() + CANARY_TIMEOUT_MS
+    let pollCount = 0
+    while (result?.pending && Date.now() < deadline) {
+      const delay = Math.max(1_000, Math.min(5_000, Number(result.pollAfterMs) || 2_000))
+      await new Promise((resolve) => setTimeout(resolve, delay))
+      pollCount += 1
+      result = await invokeGenerate(supabaseUrl, publishableKey, accessToken, {
+        action: 'image-task-status',
+        feature: 'render',
+        prompt: 'Production canary',
+        fileNames: [attachment.name],
+        imageSlot: actualSlot,
+        imageAspectRatio: '1:1',
+        taskId: result.taskId,
+        taskToken: result.taskToken,
+      }, 90_000)
+    }
+    if (result?.pending) throw new Error('canary_render_timeout')
+    const imageUrl = String(result?.images?.[0]?.imageUrl || '')
+    if (!imageUrl.startsWith('data:image/') && !imageUrl.startsWith('https://')) {
+      throw new Error('canary_missing_final_image')
+    }
+    return {
+      name: `real_image_${selectedSlot}`,
+      status: actualSlot === selectedSlot ? 'pass' : 'degraded',
+      latencyMs: Date.now() - startedAt,
+      selectedSlot,
+      actualSlot,
+      pollCount,
+    }
+  } catch (error) {
+    return {
+      name: `real_image_${selectedSlot}`,
+      status: 'fail',
+      latencyMs: Date.now() - startedAt,
+      selectedSlot,
+      detail: error instanceof Error ? error.message.slice(0, 300) : 'unknown_canary_error',
+    }
+  }
+}
+
 async function main() {
   const publicUrl = normalizedBaseUrl(process.env.ARCHFLOW_PUBLIC_URL || DEFAULT_PUBLIC_URL)
   const supabaseUrl = normalizedBaseUrl(process.env.ARCHFLOW_SUPABASE_URL || DEFAULT_SUPABASE_URL)
@@ -85,6 +168,9 @@ async function main() {
         }
         if (payload.ok !== true) throw new Error('operational_health_failed')
       }))
+      for (const selectedSlot of ['image1', 'image2']) {
+        checks.push(await realImageCanary({ publicUrl, supabaseUrl, publishableKey, accessToken, selectedSlot }))
+      }
     } catch (error) {
       checks.push({
         name: 'edge_operational_health',
@@ -98,14 +184,15 @@ async function main() {
   }
 
   const failed = checks.filter((check) => check.status === 'fail')
+  const degraded = checks.filter((check) => check.status === 'degraded')
   const report = {
     schemaVersion: 1,
     checkedAt: new Date().toISOString(),
-    status: failed.length ? 'fail' : 'pass',
+    status: failed.length ? 'fail' : degraded.length ? 'degraded' : 'pass',
     checks,
   }
   process.stdout.write(`${JSON.stringify(report)}\n`)
-  if (failed.length) process.exitCode = 1
+  if (failed.length || degraded.length) process.exitCode = 1
 }
 
 await main()
