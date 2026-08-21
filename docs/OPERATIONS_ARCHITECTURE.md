@@ -5,15 +5,17 @@
 
 ## 1. 本次故障结论
 
-线上静态站、Supabase 项目和 `generate` Edge Function 均可用。最近两次失败都集中在第二路 `image2`，上游返回：
+本次通过真实 JPEG 做端到端生产测试，确认故障不是单一原因：
 
 ```text
-Gemini 生图 API 400: 请求体不是合法的 JSON，或不符合 Gemini generateContent 格式
+image1: 502 Upstream service is temporarily unavailable
+image2: 400 service timeout, please try again later
+前端回归: ReferenceError（首次请求错误引用尚未创建的 task）
 ```
 
-根因是 Gemini 参考图 Part 使用了旧式字段 `inline_data.mime_type`。当前 `generateContent` JSON 格式要求 `inlineData.mimeType`。本地修复已改为规范字段，并增加回归测试，防止以后误改回旧格式。该修复尚未发布。
+已上线的修复包括：参考图统一转为最大 2048 像素的标准 JPEG；服务端按文件魔数校验 MIME；`image1` 遇到 502 时自动切换 `image2`；`image2` 对 timeout、429 和 5xx 最多重试三次；前端轮询跟随服务端返回的真实槽位。真实生产验收已完成一次 `image1 → image2 → 最终图片` 全链路。
 
-这类 400 不是云端抖动，重复请求不会自行恢复，还会浪费时间。因此运维系统必须先分类，再决定是否重试。
+历史上的 Gemini schema 400 来自旧式 `inline_data.mime_type` 字段，已改为规范的 `inlineData.mimeType`。schema 400 不应重试；本次 `service timeout` 虽然也是 400，但错误语义明确为瞬态，因此允许有上限的退避重试。运维系统必须同时判断状态码和受控错误分类。
 
 ## 2. 目标与边界
 
@@ -47,7 +49,8 @@ Supabase Auth ── Edge Function ── 生图 API 1
 每 6 小时云端探测
   ├─ 公开站点 HTML
   ├─ Supabase Auth 健康
-  └─ 登录后的 Edge 深度检查（1×1 无敏感图片、协议负向探针）
+  ├─ 登录后的 Edge 协议检查
+  └─ 两路真实 JPEG 端到端生图 canary（验证最终图片）
           │
           ▼
 结构化健康报告 + 单一 GitHub Incident Issue
@@ -109,11 +112,11 @@ Supabase Auth ── Edge Function ── 生图 API 1
 
 ## 6. 本次上线实现
 
-- `scripts/health-check.mjs`：只读检查公开站点、Supabase Auth，并通过专用监控账号检查 Edge capabilities 与 Gemini 请求协议。输出单行 JSON，失败返回非零退出码。
+- `scripts/health-check.mjs`：检查公开站点、Supabase Auth、Edge capabilities，并通过专用监控账号分别选择两路 API 执行真实 JPEG 生图，轮询到最终图片。故障转移会标记为 `degraded`，失败或降级均返回非零退出码。
 - `.github/workflows/health-check.yml`：每 6 小时执行健康检查，保存 14 天报告，失败时创建或更新一个 GitHub Issue，恢复后自动关闭该 Issue。
 - Gemini payload 修复与防回退测试：已在本地完成。
 
-监控使用权限最小化的专用账号，不复用管理员或日常账号；`ARCHFLOW_MONITOR_PASSWORD` 只放 GitHub Actions Secret。协议检查只发送代码内置的 1×1 无敏感图片并要求纯文本 `OK`：上游若进入语义处理阶段即证明 JSON 与 `inlineData` 协议已被接受，不上传用户文件，也不要求生成业务图片。
+监控使用权限最小化的专用账号，不复用管理员或日常账号；`ARCHFLOW_MONITOR_PASSWORD` 只放 GitHub Actions Secret。协议检查继续使用代码内置的 1×1 无敏感图片；端到端 canary 使用仓库公开测试图，不上传用户文件。真实 canary 每 6 小时对两路各执行一次，因此会产生最多 8 次/天的供应商生成调用，需纳入费用监控。
 
 ## 7. 实施顺序
 
