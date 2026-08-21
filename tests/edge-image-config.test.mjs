@@ -25,6 +25,8 @@ test('生产健康检查以最小无敏感图片验证 Gemini 请求协议', () 
   assert.match(source, /geminiGenerationPayload\([\s\S]*?responseMode: 'url', size: '1K'/)
   assert.match(source, /appMetadata\?\.role !== 'health_monitor'/)
   assert.match(source, /body\.action === 'health'/)
+  assert.match(source, /const protocolAccepted = response\.ok \|\| semanticRejection/)
+  assert.match(source, /outcome: semanticRejection \? 'protocol_accepted'/)
   assert.match(source, /protocolChecks\.every\(\(check\) => check\.connected\)/)
 })
 

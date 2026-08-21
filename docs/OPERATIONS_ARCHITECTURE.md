@@ -47,7 +47,7 @@ Supabase Auth ── Edge Function ── 生图 API 1
 每 6 小时云端探测
   ├─ 公开站点 HTML
   ├─ Supabase Auth 健康
-  └─ 登录后的 Edge 深度检查（1×1 无敏感图片、纯文本响应）
+  └─ 登录后的 Edge 深度检查（1×1 无敏感图片、协议负向探针）
           │
           ▼
 结构化健康报告 + 单一 GitHub Incident Issue
@@ -113,7 +113,7 @@ Supabase Auth ── Edge Function ── 生图 API 1
 - `.github/workflows/health-check.yml`：每 6 小时执行健康检查，保存 14 天报告，失败时创建或更新一个 GitHub Issue，恢复后自动关闭该 Issue。
 - Gemini payload 修复与防回退测试：已在本地完成。
 
-监控使用权限最小化的专用账号，不复用管理员或日常账号；`ARCHFLOW_MONITOR_PASSWORD` 只放 GitHub Actions Secret。协议检查只发送代码内置的 1×1 无敏感图片并要求纯文本 `OK`，不上传用户文件，也不要求生成业务图片。
+监控使用权限最小化的专用账号，不复用管理员或日常账号；`ARCHFLOW_MONITOR_PASSWORD` 只放 GitHub Actions Secret。协议检查只发送代码内置的 1×1 无敏感图片并要求纯文本 `OK`：上游若进入语义处理阶段即证明 JSON 与 `inlineData` 协议已被接受，不上传用户文件，也不要求生成业务图片。
 
 ## 7. 实施顺序
 
