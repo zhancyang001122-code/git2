@@ -683,12 +683,66 @@ function geminiGenerationPayload(
   return {
     contents: [{ role: 'user', parts: [
       { text: prompt },
-      { inline_data: { mime_type: attachment.mimeType, data: attachment.data } },
+      { inlineData: { mimeType: attachment.mimeType, data: attachment.data } },
     ] }],
     generationConfig: {
       responseModalities: [config.responseMode === 'url' ? 'TEXT' : 'IMAGE'],
       imageConfig: imageConfigPayload,
     },
+  }
+}
+
+const HEALTH_CHECK_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+
+async function checkGeminiGenerationProtocol(config: ImageConfig) {
+  const base = rootWithoutApiVersion(config.baseUrl)
+  try {
+    const response = await fetch(`${base}/v1beta/models/${encodeURIComponent(config.model)}:generateContent`, {
+      method: 'POST',
+      headers: geminiHeaders(config, true),
+      body: JSON.stringify(geminiGenerationPayload(
+        { ...config, responseMode: 'url', size: '1K' },
+        '这是自动健康检查。只识别输入图片并回复 OK，不要生成或修改图片。',
+        { name: 'health-check.png', mimeType: 'image/png', data: HEALTH_CHECK_PNG_BASE64 },
+        '1:1',
+      )),
+      signal: AbortSignal.timeout(45_000),
+    })
+    const payload = await readProviderPayload(response)
+    const detail = response.ok ? 'ok' : providerErrorDetail(payload)
+    console.info(JSON.stringify({
+      event: 'gemini_protocol_health_check',
+      slot: config.id,
+      model: config.model,
+      connected: response.ok,
+      status: response.status,
+      detail: detail.slice(0, 300),
+    }))
+    return { slot: config.id, connected: response.ok, httpStatus: response.status, detail: detail.slice(0, 300) }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : 'unknown_error'
+    console.warn(JSON.stringify({
+      event: 'gemini_protocol_health_check',
+      slot: config.id,
+      model: config.model,
+      connected: false,
+      detail: detail.slice(0, 300),
+    }))
+    return { slot: config.id, connected: false, detail: detail.slice(0, 300) }
+  }
+}
+
+async function operationalHealth(user: Record<string, unknown>) {
+  const appMetadata = user.app_metadata as Record<string, unknown> | undefined
+  if (appMetadata?.role !== 'health_monitor') throw new HttpError('无权执行生产健康检查。', 403)
+  const baseHealth = await capabilities()
+  const geminiConfigs = imageConfigs().filter((config) => isReady(config) && config.protocol === 'gemini')
+  const protocolChecks = await Promise.all(geminiConfigs.map(checkGeminiGenerationProtocol))
+  const imageModesHealthy = baseHealth.imageModes.filter((mode) => mode.configured).every((mode) => mode.connected)
+  return {
+    ...baseHealth,
+    ok: baseHealth.languageReady && imageModesHealthy && protocolChecks.every((check) => check.connected),
+    protocolChecks,
   }
 }
 
@@ -1059,6 +1113,7 @@ Deno.serve(async (req: Request) => {
     const user = await requireAuthenticatedUser(req)
     const body = await req.json()
     if (body.action === 'capabilities') return json(await capabilities(), 200, req)
+    if (body.action === 'health') return json(await operationalHealth(user), 200, req)
     if (body.action === 'image-task-status') return json(await pollImageTask(body, user), 200, req)
     if (body.action === 'persist-artifact') return json(await persistRemoteArtifact(body, user), 200, req)
     const feature = String(body.feature || '')
