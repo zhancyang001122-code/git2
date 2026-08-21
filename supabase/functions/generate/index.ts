@@ -710,15 +710,23 @@ async function checkGeminiGenerationProtocol(config: ImageConfig) {
     })
     const payload = await readProviderPayload(response)
     const detail = response.ok ? 'ok' : providerErrorDetail(payload)
+    const semanticRejection = response.status === 400 && /未能生成图片|调整提示词|更换参考图/i.test(detail)
+    const protocolAccepted = response.ok || semanticRejection
     console.info(JSON.stringify({
       event: 'gemini_protocol_health_check',
       slot: config.id,
       model: config.model,
-      connected: response.ok,
+      connected: protocolAccepted,
       status: response.status,
       detail: detail.slice(0, 300),
     }))
-    return { slot: config.id, connected: response.ok, httpStatus: response.status, detail: detail.slice(0, 300) }
+    return {
+      slot: config.id,
+      connected: protocolAccepted,
+      httpStatus: response.status,
+      outcome: semanticRejection ? 'protocol_accepted' : response.ok ? 'ok' : 'rejected',
+      detail: detail.slice(0, 300),
+    }
   } catch (error) {
     const detail = error instanceof Error ? error.message : 'unknown_error'
     console.warn(JSON.stringify({
