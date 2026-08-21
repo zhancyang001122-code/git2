@@ -13,7 +13,7 @@ image2: 400 service timeout, please try again later
 前端回归: ReferenceError（首次请求错误引用尚未创建的 task）
 ```
 
-已上线的修复包括：参考图统一转为最大 2048 像素的标准 JPEG；服务端按文件魔数校验 MIME；`image1` 遇到 502 时自动切换 `image2`；`image2` 对 timeout、429 和 5xx 最多重试三次；前端轮询跟随服务端返回的真实槽位。真实生产验收已完成一次 `image1 → image2 → 最终图片` 全链路。
+已上线的修复包括：参考图统一转为最大 2048 像素的标准 JPEG；服务端按文件魔数校验 MIME；`image1` 遇到 502 时自动切换 `image2`；`image2` 对供应商明确返回的 service timeout、429 和 5xx 最多尝试两次；前端轮询跟随服务端返回的真实槽位。客户端本地超时属于结果不确定状态，不会盲目重发，避免重复扣费。真实生产验收已完成一次 `image1 → image2 → 最终图片` 全链路。
 
 历史上的 Gemini schema 400 来自旧式 `inline_data.mime_type` 字段，已改为规范的 `inlineData.mimeType`。schema 400 不应重试；本次 `service timeout` 虽然也是 400，但错误语义明确为瞬态，因此允许有上限的退避重试。运维系统必须同时判断状态码和受控错误分类。
 

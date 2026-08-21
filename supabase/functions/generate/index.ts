@@ -9,7 +9,7 @@ const corsHeaders = {
 const ASSET_BUCKET = 'user-assets'
 const ASSET_MAX_BYTES = 40 * 1024 * 1024
 const ASSET_TOKEN_TTL_MS = 24 * 60 * 60 * 1000
-const MANAGED_IMAGE_MAX_ATTEMPTS = 3
+const MANAGED_IMAGE_MAX_ATTEMPTS = 2
 
 function corsOrigin(req: Request) {
   const origin = req.headers.get('Origin')?.trim() || ''
@@ -798,7 +798,7 @@ async function requestGeminiImage(
 function retryableGeminiError(error: unknown) {
   if (error instanceof HttpError && (error.status === 429 || error.status >= 500)) return true
   const message = error instanceof Error ? error.message : String(error || '')
-  return /service timeout|timed?\s*out|try again later|temporar(?:y|ily)|unavailable|overloaded|rate.?limit/i.test(message)
+  return /service timeout|try again later|temporar(?:y|ily)|unavailable|overloaded|rate.?limit/i.test(message)
 }
 
 function managedImageRetryDelay(attempt: number) {
@@ -1061,6 +1061,11 @@ async function pollImageTask(body: Record<string, unknown>, user: { id: string }
     }
     const createdAt = new Date(managedTask.created_at).getTime()
     if (Number.isFinite(createdAt) && Date.now() - createdAt > 7 * 60 * 1000) {
+      await updateManagedImageTask(taskId, {
+        status: 'failed',
+        error_message: 'Gemini 4K 后台任务超过 7 分钟仍未完成。',
+        image_url: null,
+      })
       throw new HttpError('Gemini 4K 后台任务超过 7 分钟仍未完成，请重新生成。', 504)
     }
     return pendingImageTask({ id: taskId, poll_after_ms: 2000 }, config, user.id, slot)
