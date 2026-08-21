@@ -46,6 +46,10 @@ test('长耗时 4K 请求转为服务端后台任务并由前端轮询', () => {
   assert.match(source, /managedTask\.status === 'completed'/)
   assert.match(source, /managedTask\.status === 'failed'/)
   assert.match(source, /expires_at=lt\./)
+  assert.match(source, /MANAGED_IMAGE_MAX_ATTEMPTS = 3/)
+  assert.match(source, /retryableGeminiError\(error\)/)
+  assert.match(source, /managed_image_task_attempt_failed/)
+  assert.match(source, /AbortSignal\.timeout\(120_000\)/)
 })
 
 test('第一路供应商暂时不可用时自动切换到第二路生图', () => {

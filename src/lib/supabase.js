@@ -394,7 +394,7 @@ export async function generateWithCloudApi({ feature, prompt, files = [], option
     prompt,
     fileNames,
     attachments,
-    imageSlot: task.imageSlot || imageSlot,
+    imageSlot,
     imageSize: options.imageSize,
     imageAspectRatio: options.imageAspectRatio,
   }
@@ -404,7 +404,7 @@ export async function generateWithCloudApi({ feature, prompt, files = [], option
     feature,
     prompt,
     fileNames,
-    imageSlot,
+    imageSlot: task.imageSlot || imageSlot,
     imageAspectRatio: options.imageAspectRatio,
     taskId: task.taskId,
     taskToken: task.taskToken,

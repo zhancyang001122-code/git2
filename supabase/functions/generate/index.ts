@@ -9,6 +9,7 @@ const corsHeaders = {
 const ASSET_BUCKET = 'user-assets'
 const ASSET_MAX_BYTES = 40 * 1024 * 1024
 const ASSET_TOKEN_TTL_MS = 24 * 60 * 60 * 1000
+const MANAGED_IMAGE_MAX_ATTEMPTS = 3
 
 function corsOrigin(req: Request) {
   const origin = req.headers.get('Origin')?.trim() || ''
@@ -785,12 +786,23 @@ async function requestGeminiImage(
     method: 'POST',
     headers: geminiHeaders(config, true),
     body: JSON.stringify(geminiGenerationPayload(config, prompt, attachment, aspectRatio)),
+    signal: AbortSignal.timeout(120_000),
   })
   const payload = await readProviderPayload(response)
   if (!response.ok) {
     throw new HttpError(`Gemini 生图 API ${response.status}: ${providerErrorDetail(payload)}`, response.status >= 500 ? 502 : 400)
   }
   return { response, payload }
+}
+
+function retryableGeminiError(error: unknown) {
+  if (error instanceof HttpError && (error.status === 429 || error.status >= 500)) return true
+  const message = error instanceof Error ? error.message : String(error || '')
+  return /service timeout|timed?\s*out|try again later|temporar(?:y|ily)|unavailable|overloaded|rate.?limit/i.test(message)
+}
+
+function managedImageRetryDelay(attempt: number) {
+  return Math.min(10_000, attempt * attempt * 2_000)
 }
 
 async function runManagedGeminiTask(
@@ -800,20 +812,30 @@ async function runManagedGeminiTask(
   attachment: Attachment,
   aspectRatio: string,
 ) {
-  try {
-    const { response, payload } = await requestGeminiImage(config, prompt, attachment, aspectRatio)
-    if (response.status === 202 || payload.execution_mode === 'async' || imageTaskId(payload)) {
-      throw new Error('上游返回了未完成的异步任务，但当前服务未提供兼容的图片结果。')
+  let finalError: unknown
+  for (let attempt = 1; attempt <= MANAGED_IMAGE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const { response, payload } = await requestGeminiImage(config, prompt, attachment, aspectRatio)
+      if (response.status === 202 || payload.execution_mode === 'async' || imageTaskId(payload)) {
+        throw new Error('上游返回了未完成的异步任务，但当前服务未提供兼容的图片结果。')
+      }
+      const imageUrl = geminiImageUrl(payload)
+      if (!imageUrl) throw new Error(`Gemini API 已响应，但没有返回可显示的图片：${providerErrorDetail(payload)}`)
+      await updateManagedImageTask(taskId, { status: 'completed', image_url: imageUrl, error_message: null })
+      console.info(JSON.stringify({ event: 'managed_image_task_completed', taskId, attempt }))
+      return
+    } catch (error) {
+      finalError = error
+      const message = error instanceof Error ? error.message : 'Gemini 后台生图失败。'
+      const willRetry = attempt < MANAGED_IMAGE_MAX_ATTEMPTS && retryableGeminiError(error)
+      console.warn(JSON.stringify({ event: 'managed_image_task_attempt_failed', taskId, attempt, willRetry, message: message.slice(0, 500) }))
+      if (!willRetry) break
+      await new Promise((resolve) => setTimeout(resolve, managedImageRetryDelay(attempt)))
     }
-    const imageUrl = geminiImageUrl(payload)
-    if (!imageUrl) throw new Error(`Gemini API 已响应，但没有返回可显示的图片：${providerErrorDetail(payload)}`)
-    await updateManagedImageTask(taskId, { status: 'completed', image_url: imageUrl, error_message: null })
-    console.info(JSON.stringify({ event: 'managed_image_task_completed', taskId }))
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Gemini 后台生图失败。'
-    await updateManagedImageTask(taskId, { status: 'failed', error_message: message.slice(0, 1000), image_url: null })
-    console.error(JSON.stringify({ event: 'managed_image_task_failed', taskId, message: message.slice(0, 500) }))
   }
+  const message = finalError instanceof Error ? finalError.message : 'Gemini 后台生图失败。'
+  await updateManagedImageTask(taskId, { status: 'failed', error_message: message.slice(0, 1000), image_url: null })
+  console.error(JSON.stringify({ event: 'managed_image_task_failed', taskId, message: message.slice(0, 500) }))
 }
 
 function imageTaskId(payload: Record<string, unknown>) {

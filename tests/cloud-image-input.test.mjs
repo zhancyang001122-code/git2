@@ -12,5 +12,9 @@ test('浏览器在云端生图前把参考图标准化为最大 2048 像素 JPEG
 })
 
 test('供应商切换后轮询使用服务端返回的实际生图槽位', () => {
-  assert.match(source, /imageSlot: task\.imageSlot \|\| imageSlot/)
+  const initialRequest = source.match(/const request = \{[\s\S]*?\n  \}/)?.[0] || ''
+  const pollingRequest = source.match(/waitForImageTask\(initialResult,[\s\S]*?\n  \}\)\)/)?.[0] || ''
+  assert.match(initialRequest, /\n    imageSlot,\n/)
+  assert.doesNotMatch(initialRequest, /task\.imageSlot/)
+  assert.match(pollingRequest, /imageSlot: task\.imageSlot \|\| imageSlot/)
 })
