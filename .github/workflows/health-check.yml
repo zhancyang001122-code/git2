@@ -33,7 +33,9 @@ jobs:
           ARCHFLOW_MONITOR_EMAIL: ${{ secrets.ARCHFLOW_MONITOR_EMAIL }}
           ARCHFLOW_MONITOR_PASSWORD: ${{ secrets.ARCHFLOW_MONITOR_PASSWORD }}
           ARCHFLOW_HEALTH_TIMEOUT_MS: 60000
-        run: node scripts/health-check.mjs | tee health-report.json
+        run: |
+          set -o pipefail
+          node scripts/health-check.mjs | tee health-report.json
 
       - name: Upload diagnostic report
         if: always()
