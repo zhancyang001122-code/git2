@@ -7,7 +7,9 @@ const workflow = await readFile(new URL('../.github/workflows/health-check.yml',
 
 test('生产巡检会对两路生图执行真实图片生成并验证最终图片', () => {
   assert.match(script, /for \(const selectedSlot of \['image1', 'image2'\]\)/)
-  assert.match(script, /case-thumbnails\/tank-shanghai\.jpg/)
+  assert.match(script, /const CANARY_PNG_BASE64 = /)
+  assert.match(script, /No people, no text, and no logos\./)
+  assert.doesNotMatch(script, /case-thumbnails\/tank-shanghai\.jpg/)
   assert.match(script, /action: 'image-task-status'/)
   assert.match(script, /canary_missing_final_image/)
   assert.match(script, /actualSlot === selectedSlot \? 'pass' : 'degraded'/)
