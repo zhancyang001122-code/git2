@@ -4,6 +4,7 @@ const DEFAULT_PUBLIC_URL = 'https://archflow.zaneyang.xyz/'
 const DEFAULT_SUPABASE_URL = 'https://mblnorfsegteomazffwy.supabase.co'
 const DEFAULT_TIMEOUT_MS = 12_000
 const CANARY_TIMEOUT_MS = 8 * 60_000
+const CANARY_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
 
 function normalizedBaseUrl(value) {
   return String(value || '').trim().replace(/\/+$/, '')
@@ -66,22 +67,18 @@ async function invokeGenerate(supabaseUrl, publishableKey, accessToken, body, ti
   return payload
 }
 
-async function realImageCanary({ publicUrl, supabaseUrl, publishableKey, accessToken, selectedSlot }) {
+async function realImageCanary({ supabaseUrl, publishableKey, accessToken, selectedSlot }) {
   const startedAt = Date.now()
   try {
-    const imageResponse = await fetch(`${publicUrl}/case-thumbnails/tank-shanghai.jpg`, {
-      signal: AbortSignal.timeout(30_000),
-    })
-    if (!imageResponse.ok) throw new Error(`canary_image_http_${imageResponse.status}`)
     const attachment = {
-      name: 'archflow-canary.jpg',
-      mimeType: 'image/jpeg',
-      data: Buffer.from(await imageResponse.arrayBuffer()).toString('base64'),
+      name: 'archflow-canary.png',
+      mimeType: 'image/png',
+      data: CANARY_PNG_BASE64,
     }
     let result = await invokeGenerate(supabaseUrl, publishableKey, accessToken, {
       action: 'generate',
       feature: 'render',
-      prompt: 'Production canary: preserve the architecture and create a clean daylight visualization.',
+      prompt: 'Create a simple empty architectural massing study: one white rectangular pavilion on a plain light-gray background. No people, no text, and no logos.',
       fileNames: [attachment.name],
       attachments: [attachment],
       imageSlot: selectedSlot,
@@ -98,7 +95,7 @@ async function realImageCanary({ publicUrl, supabaseUrl, publishableKey, accessT
       result = await invokeGenerate(supabaseUrl, publishableKey, accessToken, {
         action: 'image-task-status',
         feature: 'render',
-        prompt: 'Production canary',
+        prompt: 'Architectural massing canary',
         fileNames: [attachment.name],
         imageSlot: actualSlot,
         imageAspectRatio: '1:1',
@@ -169,7 +166,7 @@ async function main() {
         if (payload.ok !== true) throw new Error('operational_health_failed')
       }))
       for (const selectedSlot of ['image1', 'image2']) {
-        checks.push(await realImageCanary({ publicUrl, supabaseUrl, publishableKey, accessToken, selectedSlot }))
+        checks.push(await realImageCanary({ supabaseUrl, publishableKey, accessToken, selectedSlot }))
       }
     } catch (error) {
       checks.push({
