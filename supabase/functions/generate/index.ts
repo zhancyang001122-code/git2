@@ -10,6 +10,7 @@ const ASSET_BUCKET = 'user-assets'
 const ASSET_MAX_BYTES = 40 * 1024 * 1024
 const ASSET_TOKEN_TTL_MS = 24 * 60 * 60 * 1000
 const MANAGED_IMAGE_MAX_ATTEMPTS = 2
+const MANAGED_TASK_READ_MAX_ATTEMPTS = 3
 
 function corsOrigin(req: Request) {
   const origin = req.headers.get('Origin')?.trim() || ''
@@ -65,6 +66,7 @@ type ImageConnection = {
 
 type ManagedImageTask = {
   id: string
+  user_id?: string
   status: 'processing' | 'completed' | 'failed'
   image_url?: string | null
   error_message?: string | null
@@ -119,8 +121,42 @@ function storageObjectUrl(objectPath: string) {
   return `${supabaseUrl}/storage/v1/object/${ASSET_BUCKET}/${encodedPath}`
 }
 
-async function createManagedImageTask(userId: string, imageSlot: string) {
-  const expiredBefore = encodeURIComponent(new Date().toISOString())
+function storageBucketObjectUrl() {
+  const supabaseUrl = env('SUPABASE_URL')
+  if (!supabaseUrl) throw new HttpError('资产存储缺少 SUPABASE_URL。', 500)
+  return `${supabaseUrl}/storage/v1/object/${ASSET_BUCKET}`
+}
+
+function storageSignedObjectUrl(objectPath: string) {
+  const supabaseUrl = env('SUPABASE_URL')
+  if (!supabaseUrl) throw new HttpError('资产存储缺少 SUPABASE_URL。', 500)
+  const encodedPath = objectPath.split('/').map(encodeURIComponent).join('/')
+  return `${supabaseUrl}/storage/v1/object/sign/${ASSET_BUCKET}/${encodedPath}`
+}
+
+async function cleanupExpiredManagedImageTasks(expiredBefore: string) {
+  const expiredResponse = await fetch(imageTaskRestUrl(`?expires_at=lt.${expiredBefore}&select=id,user_id&limit=100`), {
+    headers: adminRestHeaders(),
+  })
+  if (!expiredResponse.ok) {
+    console.warn(JSON.stringify({ event: 'image_task_cleanup_scan_failed', status: expiredResponse.status }))
+    return
+  }
+  const expiredTasks = await expiredResponse.json() as ManagedImageTask[]
+  const prefixes = expiredTasks.flatMap((task) => task.user_id
+    ? ['png', 'jpg', 'webp'].map((extension) => `${task.user_id}/managed/${task.id}.${extension}`)
+    : [])
+  if (prefixes.length) {
+    const storageCleanupResponse = await fetch(storageBucketObjectUrl(), {
+      method: 'DELETE',
+      headers: adminRestHeaders(true),
+      body: JSON.stringify({ prefixes }),
+    })
+    if (!storageCleanupResponse.ok) {
+      console.warn(JSON.stringify({ event: 'managed_image_cleanup_failed', status: storageCleanupResponse.status }))
+      return
+    }
+  }
   const cleanupResponse = await fetch(imageTaskRestUrl(`?expires_at=lt.${expiredBefore}`), {
     method: 'DELETE',
     headers: { ...adminRestHeaders(), Prefer: 'return=minimal' },
@@ -128,6 +164,11 @@ async function createManagedImageTask(userId: string, imageSlot: string) {
   if (!cleanupResponse.ok) {
     console.warn(JSON.stringify({ event: 'image_task_cleanup_failed', status: cleanupResponse.status }))
   }
+}
+
+async function createManagedImageTask(userId: string, imageSlot: string) {
+  const expiredBefore = encodeURIComponent(new Date().toISOString())
+  await cleanupExpiredManagedImageTasks(expiredBefore)
   const taskId = `imgtask_${crypto.randomUUID()}`
   const response = await fetch(imageTaskRestUrl(), {
     method: 'POST',
@@ -142,10 +183,28 @@ async function createManagedImageTask(userId: string, imageSlot: string) {
 
 async function managedImageTask(taskId: string, userId: string): Promise<ManagedImageTask | null> {
   const query = `?id=eq.${encodeURIComponent(taskId)}&user_id=eq.${encodeURIComponent(userId)}&select=id,status,image_url,error_message,created_at,expires_at&limit=1`
-  const response = await fetch(imageTaskRestUrl(query), { headers: adminRestHeaders() })
-  if (!response.ok) throw new HttpError(`无法读取 4K 生图任务（${response.status}）。`, 502)
-  const rows = await response.json() as ManagedImageTask[]
-  return rows[0] || null
+  let lastDetail = 'unknown_error'
+  for (let attempt = 1; attempt <= MANAGED_TASK_READ_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(imageTaskRestUrl(query), {
+        headers: adminRestHeaders(),
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (response.ok) {
+        const rows = await response.json() as ManagedImageTask[]
+        return rows[0] || null
+      }
+      lastDetail = `HTTP ${response.status}`
+      if (response.status < 500) throw new HttpError(`无法读取 4K 生图任务（${response.status}）。`, 502)
+    } catch (error) {
+      if (error instanceof HttpError) throw error
+      lastDetail = error instanceof Error ? error.message : 'network_error'
+    }
+    if (attempt < MANAGED_TASK_READ_MAX_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, attempt * 300))
+    }
+  }
+  throw new HttpError(`无法读取 4K 生图任务（重试后仍失败：${lastDetail.slice(0, 120)}）。`, 502)
 }
 
 async function updateManagedImageTask(taskId: string, values: Record<string, unknown>) {
@@ -806,8 +865,56 @@ function managedImageRetryDelay(attempt: number) {
   return Math.min(10_000, attempt * attempt * 2_000)
 }
 
+async function storeManagedImageOutput(taskId: string, userId: string, imageUrl: string) {
+  if (/^https:\/\//i.test(imageUrl)) return imageUrl
+  const inlineImage = /^data:([^;,]+);base64,([\s\S]+)$/i.exec(imageUrl)
+  if (!inlineImage) throw new HttpError('Gemini 返回了不支持的图片地址格式。', 502)
+
+  const bytes = decodeBase64(inlineImage[2])
+  if (!bytes.length) throw new HttpError('Gemini 返回了空图片。', 502)
+  if (bytes.length > ASSET_MAX_BYTES) throw new HttpError('Gemini 返回的图片超过 40 MiB 上限。', 413)
+  const contentType = imageTypeFromBytes(bytes, inlineImage[1])
+  const storagePath = `${userId}/managed/${storageImageName(taskId, contentType)}`
+
+  const uploadResponse = await fetch(storageObjectUrl(storagePath), {
+    method: 'POST',
+    headers: {
+      ...adminRestHeaders(),
+      'Content-Type': contentType,
+      'Cache-Control': '3600',
+      'x-upsert': 'true',
+    },
+    body: bytes,
+    signal: AbortSignal.timeout(90_000),
+  })
+  if (!uploadResponse.ok) {
+    throw new HttpError(`无法暂存 Gemini 成图（${uploadResponse.status}）。`, uploadResponse.status >= 500 ? 502 : 500)
+  }
+
+  const signResponse = await fetch(storageSignedObjectUrl(storagePath), {
+    method: 'POST',
+    headers: adminRestHeaders(true),
+    body: JSON.stringify({ expiresIn: Math.floor(ASSET_TOKEN_TTL_MS / 1000) }),
+    signal: AbortSignal.timeout(15_000),
+  })
+  const signPayload = await signResponse.json().catch(() => ({})) as Record<string, unknown>
+  if (!signResponse.ok) throw new HttpError(`无法签发 Gemini 成图地址（${signResponse.status}）。`, 502)
+  const signedPath = String(signPayload.signedURL || signPayload.signedUrl || '')
+  if (!signedPath) throw new HttpError('Supabase Storage 未返回 Gemini 成图签名地址。', 502)
+
+  const supabaseUrl = env('SUPABASE_URL')
+  const signedUrl = /^https:\/\//i.test(signedPath)
+    ? signedPath
+    : signedPath.startsWith('/storage/v1/')
+      ? `${supabaseUrl}${signedPath}`
+      : `${supabaseUrl}/storage/v1${signedPath.startsWith('/') ? '' : '/'}${signedPath}`
+  console.info(JSON.stringify({ event: 'managed_image_output_stored', taskId, storagePath, bytes: bytes.length }))
+  return signedUrl
+}
+
 async function runManagedGeminiTask(
   taskId: string,
+  userId: string,
   config: ImageConfig,
   prompt: string,
   attachment: Attachment,
@@ -822,7 +929,8 @@ async function runManagedGeminiTask(
       }
       const imageUrl = geminiImageUrl(payload)
       if (!imageUrl) throw new Error(`Gemini API 已响应，但没有返回可显示的图片：${providerErrorDetail(payload)}`)
-      await updateManagedImageTask(taskId, { status: 'completed', image_url: imageUrl, error_message: null })
+      const durableImageUrl = await storeManagedImageOutput(taskId, userId, imageUrl)
+      await updateManagedImageTask(taskId, { status: 'completed', image_url: durableImageUrl, error_message: null })
       console.info(JSON.stringify({ event: 'managed_image_task_completed', taskId, attempt }))
       return
     } catch (error) {
@@ -1112,7 +1220,7 @@ async function generateImageWithSelectedProvider(body: Record<string, unknown>, 
   if (useGemini) {
     if (config.responseMode === 'url') {
       const taskId = await createManagedImageTask(user.id, slot)
-      EdgeRuntime.waitUntil(runManagedGeminiTask(taskId, config, prompt, attachment, aspectRatio))
+      EdgeRuntime.waitUntil(runManagedGeminiTask(taskId, user.id, config, prompt, attachment, aspectRatio))
       return pendingImageTask({ id: taskId, poll_after_ms: 2000 }, config, user.id, slot)
     }
     const { response, payload } = await requestGeminiImage(config, prompt, attachment, aspectRatio)
