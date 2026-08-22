@@ -770,7 +770,8 @@ async function operationalHealth(user: Record<string, unknown>) {
   const imageModesHealthy = baseHealth.imageModes.filter((mode) => mode.configured).every((mode) => mode.connected)
   return {
     ...baseHealth,
-    ok: baseHealth.languageReady && imageModesHealthy && protocolChecks.every((check) => check.connected),
+    ok: baseHealth.languageReady && imageModesHealthy,
+    protocolHealthy: protocolChecks.every((check) => check.connected),
     protocolChecks,
   }
 }
