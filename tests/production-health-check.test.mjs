@@ -13,9 +13,8 @@ test('生产巡检会对两路生图执行真实图片生成并验证最终图�
   assert.match(script, /actualSlot === selectedSlot \? 'pass' : 'degraded'/)
   assert.match(script, /if \(payload\.ok !== true\) throw new Error\('operational_health_failed'\)/)
 })
-
-test('生产巡检每六小时运行并为真实成图预留足够时间', () => {
-  assert.match(workflow, /cron: '0 \*\/6 \* \* \*'/)
+test('生产巡检每六小时在非整点运行并为真实成图预留足够时间', () => {
+  assert.match(workflow, /cron: '17 \*\/6 \* \* \*'/)
   assert.match(workflow, /timeout-minutes: 25/)
   assert.match(workflow, /set -o pipefail/)
   assert.match(workflow, /Open or update one incident issue/)
