@@ -116,7 +116,7 @@ Supabase Auth ── Edge Function ── 生图 API 1
 - `.github/workflows/health-check.yml`：每 6 小时执行健康检查，保存 14 天报告，失败时创建或更新一个 GitHub Issue，恢复后自动关闭该 Issue。
 - Gemini payload 修复与防回退测试：已在本地完成。
 
-监控使用权限最小化的专用账号，不复用管理员或日常账号；`ARCHFLOW_MONITOR_PASSWORD` 只放 GitHub Actions Secret。协议检查继续使用代码内置的 1×1 无敏感图片；端到端 canary 使用仓库公开测试图，不上传用户文件。真实 canary 每 6 小时对两路各执行一次，因此会产生最多 8 次/天的供应商生成调用，需纳入费用监控。
+监控使用权限最小化的专用账号，不复用管理员或日常账号；`ARCHFLOW_MONITOR_PASSWORD` 只放 GitHub Actions Secret。协议检查继续使用代码内置的 1×1 无敏感图片，但只作为诊断信息，不单独决定生产可用性：部分图像供应商处理这类非生图提示可能超过短探针时限。端到端 canary 使用仓库公开测试图并验证最终图片，是生图可用性的权威判定，不上传用户文件。真实 canary 每 6 小时对两路各执行一次，因此会产生最多 8 次/天的供应商生成调用，需纳入费用监控。
 
 ## 7. 实施顺序
 
