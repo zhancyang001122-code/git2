@@ -11,6 +11,10 @@ const ASSET_MAX_BYTES = 40 * 1024 * 1024
 const ASSET_TOKEN_TTL_MS = 24 * 60 * 60 * 1000
 const MANAGED_IMAGE_MAX_ATTEMPTS = 2
 const MANAGED_TASK_READ_MAX_ATTEMPTS = 3
+const MANAGED_TASK_TIMEOUT_MS = 135_000
+const MANAGED_TASK_SETTLE_BUFFER_MS = 5_000
+const REMOTE_IMAGE_DOWNLOAD_TIMEOUT_MS = 60_000
+const REMOTE_IMAGE_MAX_REDIRECTS = 3
 
 function corsOrigin(req: Request) {
   const origin = req.headers.get('Origin')?.trim() || ''
@@ -208,14 +212,19 @@ async function managedImageTask(taskId: string, userId: string): Promise<Managed
 }
 
 async function updateManagedImageTask(taskId: string, values: Record<string, unknown>) {
-  const response = await fetch(imageTaskRestUrl(`?id=eq.${encodeURIComponent(taskId)}`), {
+  const response = await fetch(imageTaskRestUrl(`?id=eq.${encodeURIComponent(taskId)}&status=eq.processing&select=id`), {
     method: 'PATCH',
-    headers: { ...adminRestHeaders(true), Prefer: 'return=minimal' },
+    headers: { ...adminRestHeaders(true), Prefer: 'return=representation' },
     body: JSON.stringify({ ...values, updated_at: new Date().toISOString() }),
   })
   if (!response.ok) {
     console.error(JSON.stringify({ event: 'image_task_update_failed', taskId, status: response.status }))
+    return false
   }
+  const updatedRows = await response.json().catch(() => []) as Array<{ id?: string }>
+  const updated = updatedRows.length > 0
+  if (!updated) console.warn(JSON.stringify({ event: 'image_task_update_skipped', taskId, reason: 'not_processing' }))
+  return updated
 }
 
 function readableLabel(value: string, fallback: string) {
@@ -840,13 +849,14 @@ async function requestGeminiImage(
   prompt: string,
   attachment: Attachment,
   aspectRatio: string,
+  timeoutMs = 110_000,
 ) {
   const base = rootWithoutApiVersion(config.baseUrl)
   const response = await fetch(`${base}/v1beta/models/${encodeURIComponent(config.model)}:generateContent`, {
     method: 'POST',
     headers: geminiHeaders(config, true),
     body: JSON.stringify(geminiGenerationPayload(config, prompt, attachment, aspectRatio)),
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(timeoutMs),
   })
   const payload = await readProviderPayload(response)
   if (!response.ok) {
@@ -865,15 +875,103 @@ function managedImageRetryDelay(attempt: number) {
   return Math.min(10_000, attempt * attempt * 2_000)
 }
 
-async function storeManagedImageOutput(taskId: string, userId: string, imageUrl: string) {
-  if (/^https:\/\//i.test(imageUrl)) return imageUrl
-  const inlineImage = /^data:([^;,]+);base64,([\s\S]+)$/i.exec(imageUrl)
-  if (!inlineImage) throw new HttpError('Gemini 返回了不支持的图片地址格式。', 502)
+function boundedTaskTimeout(deadline: number, maximumMs: number) {
+  const timeoutMs = Math.min(maximumMs, deadline - Date.now())
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 1_000) {
+    throw new HttpError('Gemini 4K 后台任务已达到安全执行时限。', 504)
+  }
+  return timeoutMs
+}
 
-  const bytes = decodeBase64(inlineImage[2])
+function privateIpv4Address(hostname: string) {
+  const octets = hostname.split('.').map(Number)
+  if (octets.length !== 4 || octets.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) return false
+  const [first, second] = octets
+  return first === 0
+    || first === 10
+    || first === 127
+    || (first === 169 && second === 254)
+    || (first === 172 && second >= 16 && second <= 31)
+    || (first === 192 && second === 168)
+    || first >= 224
+}
+
+function privateIpv6Address(hostname: string) {
+  const normalized = hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  return normalized === '::'
+    || normalized === '::1'
+    || /^f[cd][0-9a-f]:/.test(normalized)
+    || /^fe[89ab][0-9a-f]:/.test(normalized)
+}
+
+function validatedRemoteImageUrl(value: string, base?: string) {
+  let parsed: URL
+  try {
+    parsed = base ? new URL(value, base) : new URL(value)
+  } catch {
+    throw new HttpError('Gemini 返回的图片地址无效。', 502)
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new HttpError('Gemini 返回了不支持的图片地址协议。', 502)
+  }
+  if (parsed.username || parsed.password || (parsed.port && !['80', '443'].includes(parsed.port))) {
+    throw new HttpError('Gemini 返回的图片地址包含不安全的连接信息。', 502)
+  }
+  const hostname = parsed.hostname.toLowerCase()
+  if (!hostname.includes('.')
+    || hostname === 'localhost'
+    || hostname.endsWith('.localhost')
+    || hostname.endsWith('.local')
+    || hostname.endsWith('.internal')
+    || privateIpv4Address(hostname)
+    || privateIpv6Address(hostname)) {
+    throw new HttpError('Gemini 返回的图片地址指向不允许的内部网络。', 502)
+  }
+  return parsed
+}
+
+async function downloadRemoteImage(imageUrl: string, taskDeadline: number) {
+  const deadline = Math.min(taskDeadline, Date.now() + REMOTE_IMAGE_DOWNLOAD_TIMEOUT_MS)
+  let current = validatedRemoteImageUrl(imageUrl)
+  for (let redirectCount = 0; redirectCount <= REMOTE_IMAGE_MAX_REDIRECTS; redirectCount += 1) {
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) throw new HttpError('Gemini 成图下载超时。', 502)
+    let response: Response
+    try {
+      response = await fetch(current, {
+        redirect: 'manual',
+        signal: AbortSignal.timeout(remainingMs),
+        headers: { 'User-Agent': 'ArchFlow-Managed-Image/1.0' },
+      })
+    } catch {
+      throw new HttpError('Gemini 成图地址暂时无法读取。', 502)
+    }
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      const location = response.headers.get('location') || ''
+      if (!location || redirectCount === REMOTE_IMAGE_MAX_REDIRECTS) {
+        throw new HttpError('Gemini 成图地址重定向无效或次数过多。', 502)
+      }
+      current = validatedRemoteImageUrl(location, current.toString())
+      continue
+    }
+    if (!response.ok) throw new HttpError(`Gemini 成图下载失败（${response.status}）。`, 502)
+    const declaredLength = Number(response.headers.get('content-length') || 0)
+    if (declaredLength > ASSET_MAX_BYTES) throw new HttpError('Gemini 返回的图片超过 40 MiB 上限。', 413)
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    if (!bytes.length) throw new HttpError('Gemini 返回了空图片。', 502)
+    if (bytes.length > ASSET_MAX_BYTES) throw new HttpError('Gemini 返回的图片超过 40 MiB 上限。', 413)
+    return { bytes, declaredType: response.headers.get('content-type') || '' }
+  }
+  throw new HttpError('Gemini 成图地址重定向次数过多。', 502)
+}
+
+async function storeManagedImageOutput(taskId: string, userId: string, imageUrl: string, taskDeadline: number) {
+  const inlineImage = /^data:([^;,]+);base64,([\s\S]+)$/i.exec(imageUrl)
+  const remoteImage = inlineImage ? null : await downloadRemoteImage(imageUrl, taskDeadline)
+  const bytes = inlineImage ? decodeBase64(inlineImage[2]) : remoteImage!.bytes
   if (!bytes.length) throw new HttpError('Gemini 返回了空图片。', 502)
   if (bytes.length > ASSET_MAX_BYTES) throw new HttpError('Gemini 返回的图片超过 40 MiB 上限。', 413)
-  const contentType = imageTypeFromBytes(bytes, inlineImage[1])
+  const contentType = imageTypeFromBytes(bytes, inlineImage?.[1] || remoteImage!.declaredType)
   const storagePath = `${userId}/managed/${storageImageName(taskId, contentType)}`
 
   const uploadResponse = await fetch(storageObjectUrl(storagePath), {
@@ -885,7 +983,7 @@ async function storeManagedImageOutput(taskId: string, userId: string, imageUrl:
       'x-upsert': 'true',
     },
     body: bytes,
-    signal: AbortSignal.timeout(90_000),
+    signal: AbortSignal.timeout(boundedTaskTimeout(taskDeadline, 30_000)),
   })
   if (!uploadResponse.ok) {
     throw new HttpError(`无法暂存 Gemini 成图（${uploadResponse.status}）。`, uploadResponse.status >= 500 ? 502 : 500)
@@ -895,7 +993,7 @@ async function storeManagedImageOutput(taskId: string, userId: string, imageUrl:
     method: 'POST',
     headers: adminRestHeaders(true),
     body: JSON.stringify({ expiresIn: Math.floor(ASSET_TOKEN_TTL_MS / 1000) }),
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(boundedTaskTimeout(taskDeadline, 15_000)),
   })
   const signPayload = await signResponse.json().catch(() => ({})) as Record<string, unknown>
   if (!signResponse.ok) throw new HttpError(`无法签发 Gemini 成图地址（${signResponse.status}）。`, 502)
@@ -920,26 +1018,36 @@ async function runManagedGeminiTask(
   attachment: Attachment,
   aspectRatio: string,
 ) {
+  const taskDeadline = Date.now() + MANAGED_TASK_TIMEOUT_MS - MANAGED_TASK_SETTLE_BUFFER_MS
   let finalError: unknown
   for (let attempt = 1; attempt <= MANAGED_IMAGE_MAX_ATTEMPTS; attempt += 1) {
     try {
-      const { response, payload } = await requestGeminiImage(config, prompt, attachment, aspectRatio)
+      const { response, payload } = await requestGeminiImage(
+        config,
+        prompt,
+        attachment,
+        aspectRatio,
+        boundedTaskTimeout(taskDeadline, 110_000),
+      )
       if (response.status === 202 || payload.execution_mode === 'async' || imageTaskId(payload)) {
         throw new Error('上游返回了未完成的异步任务，但当前服务未提供兼容的图片结果。')
       }
       const imageUrl = geminiImageUrl(payload)
       if (!imageUrl) throw new Error(`Gemini API 已响应，但没有返回可显示的图片：${providerErrorDetail(payload)}`)
-      const durableImageUrl = await storeManagedImageOutput(taskId, userId, imageUrl)
+      const durableImageUrl = await storeManagedImageOutput(taskId, userId, imageUrl, taskDeadline)
       await updateManagedImageTask(taskId, { status: 'completed', image_url: durableImageUrl, error_message: null })
       console.info(JSON.stringify({ event: 'managed_image_task_completed', taskId, attempt }))
       return
     } catch (error) {
       finalError = error
       const message = error instanceof Error ? error.message : 'Gemini 后台生图失败。'
-      const willRetry = attempt < MANAGED_IMAGE_MAX_ATTEMPTS && retryableGeminiError(error)
+      const retryDelay = managedImageRetryDelay(attempt)
+      const willRetry = attempt < MANAGED_IMAGE_MAX_ATTEMPTS
+        && retryableGeminiError(error)
+        && Date.now() + retryDelay + 1_000 < taskDeadline
       console.warn(JSON.stringify({ event: 'managed_image_task_attempt_failed', taskId, attempt, willRetry, message: message.slice(0, 500) }))
       if (!willRetry) break
-      await new Promise((resolve) => setTimeout(resolve, managedImageRetryDelay(attempt)))
+      await new Promise((resolve) => setTimeout(resolve, retryDelay))
     }
   }
   const message = finalError instanceof Error ? finalError.message : 'Gemini 后台生图失败。'
@@ -1169,13 +1277,13 @@ async function pollImageTask(body: Record<string, unknown>, user: { id: string }
       throw new HttpError(`Gemini 4K 生图任务失败：${managedTask.error_message || '上游未返回具体原因。'}`, 400)
     }
     const createdAt = new Date(managedTask.created_at).getTime()
-    if (Number.isFinite(createdAt) && Date.now() - createdAt > 7 * 60 * 1000) {
+    if (Number.isFinite(createdAt) && Date.now() - createdAt > MANAGED_TASK_TIMEOUT_MS) {
       await updateManagedImageTask(taskId, {
         status: 'failed',
-        error_message: 'Gemini 4K 后台任务超过 7 分钟仍未完成。',
+        error_message: 'Gemini 4K 后台任务超过 135 秒仍未完成。',
         image_url: null,
       })
-      throw new HttpError('Gemini 4K 后台任务超过 7 分钟仍未完成，请重新生成。', 504)
+      throw new HttpError('Gemini 4K 后台任务超过 135 秒仍未完成，请重新生成。', 504)
     }
     return pendingImageTask({ id: taskId, poll_after_ms: 2000 }, config, user.id, slot)
   }
