@@ -6,7 +6,8 @@ const source = await readFile(new URL('../supabase/functions/generate/index.ts',
 
 test('第二路 NewAPI 使用独立密钥、真实模型和 Gemini 原生图生图协议', () => {
   assert.match(source, /env\('git2图gemini'\)/)
-  assert.match(source, /model: 'gemini-3-pro-image-preview'/)
+  assert.match(source, /model: 'gemini-3\.1-flash-image-preview'/)
+  assert.match(source, /responseMode: 'url',[\s\S]*?size: '2K'/)
   assert.match(source, /protocol: 'gemini'/)
   assert.match(source, /baseUrl: 'https:\/\/img\.yunfei\.best'/)
   assert.doesNotMatch(source, /env\('gemini香蕉'\)/)
@@ -31,12 +32,15 @@ test('生产健康检查以最小无敏感图片验证 Gemini 请求协议', () 
   assert.match(source, /protocolHealthy: protocolChecks\.every\(\(check\) => check\.connected\)/)
 })
 
-test('第二路 4K Gemini 使用 URL 响应，避免 Edge Function 承载超大 base64', () => {
+test('第二路 Gemini 使用 URL 响应和 2K 速度档，避免超出 Edge Function 时限', () => {
   assert.match(source, /responseMode: 'url'/)
   assert.match(source, /ARCHFLOW_IMAGE_\(\[1-9\]\\d\*\)_\(\?:LABEL\|BASE_URL\|MODEL\|API_KEY\|API_KEY_SECRET\|PROTOCOL\|RESPONSE_MODE/)
   assert.match(source, /responseModalities: \[config\.responseMode === 'url' \? 'TEXT' : 'IMAGE'\]/)
   assert.match(source, /part\.fileData \|\| part\.file_data/)
   assert.match(source, /fileData\?\.fileUri \|\| fileData\?\.file_uri/)
+  assert.match(source, /function geminiImageSizeForRequest/)
+  assert.match(source, /requestedTier[\s\S]*?configuredTier/)
+  assert.match(source, /geminiGenerationPayload\(config, prompt, attachment, aspectRatio, imageSize\)/)
 })
 
 test('长耗时 4K 请求转为服务端后台任务并由前端轮询', () => {

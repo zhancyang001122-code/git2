@@ -258,16 +258,18 @@ function legacyImageDefaults(slotNumber: number) {
       apiKey: env('生图api 4k'),
       protocol: 'auto',
       responseMode: 'inline',
+      size: '4K',
     }
   }
   if (slotNumber === 2) {
     return {
       label: 'Git2 图 Gemini',
       baseUrl: 'https://img.yunfei.best',
-      model: 'gemini-3-pro-image-preview',
+      model: 'gemini-3.1-flash-image-preview',
       apiKey: env('git2图gemini'),
       protocol: 'gemini',
       responseMode: 'url',
+      size: '2K',
     }
   }
   return {
@@ -277,6 +279,7 @@ function legacyImageDefaults(slotNumber: number) {
     apiKey: '',
     protocol: 'openai',
     responseMode: 'inline',
+    size: '4K',
   }
 }
 
@@ -293,7 +296,7 @@ function imageConfig(slot: string): ImageConfig {
     apiKey: env(`${prefix}_API_KEY`) || (apiKeySecretName ? env(apiKeySecretName) : defaults.apiKey),
     protocol: env(`${prefix}_PROTOCOL`) || defaults.protocol,
     responseMode: env(`${prefix}_RESPONSE_MODE`) === 'url' ? 'url' : defaults.responseMode,
-    size: env(`${prefix}_SIZE`) || '4K',
+    size: env(`${prefix}_SIZE`) || defaults.size,
     quality: env(`${prefix}_QUALITY`) || 'high',
   }
 }
@@ -683,6 +686,21 @@ function geminiImageSize(config: ImageConfig) {
   return /^(?:1K|2K|4K)$/.test(configuredSize) ? configuredSize : maxGeminiImageSize(config.model) || '4K'
 }
 
+function geminiImageSizeForRequest(value: unknown, config: ImageConfig) {
+  const requested = requestedImageSize(value, config.size)
+  const dimensions = requested.match(/^(\d{2,4})X(\d{2,4})$/)
+  const requestedTier = dimensions
+    ? Math.max(Number(dimensions[1]), Number(dimensions[2])) <= 1024 ? '1K'
+      : Math.max(Number(dimensions[1]), Number(dimensions[2])) <= 2048 ? '2K'
+        : '4K'
+    : requested === 'AUTO' ? geminiImageSize(config) : requested
+  const configuredTier = geminiImageSize(config)
+  const rank = { '1K': 1, '2K': 2, '4K': 3 } as const
+  return rank[requestedTier as keyof typeof rank] <= rank[configuredTier as keyof typeof rank]
+    ? requestedTier
+    : configuredTier
+}
+
 function requestedImageSize(value: unknown, fallback: string) {
   const requested = String(value || fallback || '4K').trim().toUpperCase()
   if (/^(?:1K|2K|4K|AUTO)$/.test(requested)) return requested
@@ -764,10 +782,10 @@ function geminiGenerationPayload(
   prompt: string,
   attachment: Attachment,
   aspectRatio: string,
+  imageSize = geminiImageSize(config),
 ) {
   const imageConfigPayload: Record<string, string> = {}
   if (aspectRatio) imageConfigPayload.aspectRatio = aspectRatio
-  const imageSize = geminiImageSize(config)
   if (imageSize) imageConfigPayload.imageSize = imageSize
   return {
     contents: [{ role: 'user', parts: [
@@ -849,13 +867,14 @@ async function requestGeminiImage(
   prompt: string,
   attachment: Attachment,
   aspectRatio: string,
+  imageSize: string,
   timeoutMs = 110_000,
 ) {
   const base = rootWithoutApiVersion(config.baseUrl)
   const response = await fetch(`${base}/v1beta/models/${encodeURIComponent(config.model)}:generateContent`, {
     method: 'POST',
     headers: geminiHeaders(config, true),
-    body: JSON.stringify(geminiGenerationPayload(config, prompt, attachment, aspectRatio)),
+    body: JSON.stringify(geminiGenerationPayload(config, prompt, attachment, aspectRatio, imageSize)),
     signal: AbortSignal.timeout(timeoutMs),
   })
   const payload = await readProviderPayload(response)
@@ -1017,6 +1036,7 @@ async function runManagedGeminiTask(
   prompt: string,
   attachment: Attachment,
   aspectRatio: string,
+  imageSize: string,
 ) {
   const taskDeadline = Date.now() + MANAGED_TASK_TIMEOUT_MS - MANAGED_TASK_SETTLE_BUFFER_MS
   let finalError: unknown
@@ -1027,6 +1047,7 @@ async function runManagedGeminiTask(
         prompt,
         attachment,
         aspectRatio,
+        imageSize,
         boundedTaskTimeout(taskDeadline, 110_000),
       )
       if (response.status === 202 || payload.execution_mode === 'async' || imageTaskId(payload)) {
@@ -1169,7 +1190,7 @@ async function imageResult(
     images: [{
       id: 1,
       title: feature === 'beautify' ? '真实生成 · 图纸美化' : '真实生成 · 主视角',
-      meta: `${config.model} · ${useGemini ? `${aspectRatio || '原图比例'} · ${geminiImageSize(config) || '模型原生最高分辨率'}` : `${imageSize} · ${config.quality.toUpperCase()}`}`,
+      meta: `${config.model} · ${useGemini ? `${aspectRatio || '原图比例'} · ${imageSize || '模型原生最高分辨率'}` : `${imageSize} · ${config.quality.toUpperCase()}`}`,
       imageUrl,
       assetToken,
     }],
@@ -1267,11 +1288,12 @@ async function pollImageTask(body: Record<string, unknown>, user: { id: string }
   const managedTask = await managedImageTask(taskId, user.id)
   if (managedTask) {
     const aspectRatio = geminiAspectRatio(body.imageAspectRatio)
+    const imageSize = geminiImageSizeForRequest(body.imageSize, config)
     if (new Date(managedTask.expires_at).getTime() <= Date.now()) {
       throw new HttpError('这个 4K 生图任务已过期，请重新生成。', 410)
     }
     if (managedTask.status === 'completed' && managedTask.image_url) {
-      return imageResult(body, config, feature, managedTask.image_url, aspectRatio, geminiImageSize(config), true, user.id)
+      return imageResult(body, config, feature, managedTask.image_url, aspectRatio, imageSize, true, user.id)
     }
     if (managedTask.status === 'failed') {
       throw new HttpError(`Gemini 4K 生图任务失败：${managedTask.error_message || '上游未返回具体原因。'}`, 400)
@@ -1319,7 +1341,9 @@ async function generateImageWithSelectedProvider(body: Record<string, unknown>, 
   const originalImageUrl = imageDataUrl(attachment)
   const prompt = imagePrompt(feature, String(body.prompt || ''))
   const useGemini = config.protocol === 'gemini' || (config.protocol === 'auto' && looksLikeGemini(config.model))
-  const imageSize = requestedImageSize(body.imageSize, config.size)
+  const imageSize = useGemini
+    ? geminiImageSizeForRequest(body.imageSize, config)
+    : requestedImageSize(body.imageSize, config.size)
   const aspectRatio = useGemini
     ? geminiAspectRatio(body.imageAspectRatio)
     : requestedAspectRatio(body.imageAspectRatio, feature === 'beautify' ? '4:3' : '16:9')
@@ -1328,10 +1352,10 @@ async function generateImageWithSelectedProvider(body: Record<string, unknown>, 
   if (useGemini) {
     if (config.responseMode === 'url') {
       const taskId = await createManagedImageTask(user.id, slot)
-      EdgeRuntime.waitUntil(runManagedGeminiTask(taskId, user.id, config, prompt, attachment, aspectRatio))
+      EdgeRuntime.waitUntil(runManagedGeminiTask(taskId, user.id, config, prompt, attachment, aspectRatio, imageSize))
       return pendingImageTask({ id: taskId, poll_after_ms: 2000 }, config, user.id, slot)
     }
-    const { response, payload } = await requestGeminiImage(config, prompt, attachment, aspectRatio)
+    const { response, payload } = await requestGeminiImage(config, prompt, attachment, aspectRatio, imageSize)
     if (response.status === 202 || payload.execution_mode === 'async' || imageTaskId(payload)) {
       return pendingImageTask(payload, config, user.id, slot)
     }

@@ -17,4 +17,5 @@ test('供应商切换后轮询使用服务端返回的实际生图槽位', () =>
   assert.match(initialRequest, /\n    imageSlot,\n/)
   assert.doesNotMatch(initialRequest, /task\.imageSlot/)
   assert.match(pollingRequest, /imageSlot: task\.imageSlot \|\| imageSlot/)
+  assert.match(pollingRequest, /imageSize: options\.imageSize/)
 })

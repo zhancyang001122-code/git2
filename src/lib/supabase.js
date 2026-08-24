@@ -405,6 +405,7 @@ export async function generateWithCloudApi({ feature, prompt, files = [], option
     prompt,
     fileNames,
     imageSlot: task.imageSlot || imageSlot,
+    imageSize: options.imageSize,
     imageAspectRatio: options.imageAspectRatio,
     taskId: task.taskId,
     taskToken: task.taskToken,
