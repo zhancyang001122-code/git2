@@ -106,6 +106,7 @@ async function realImageCanary({ supabaseUrl, publishableKey, accessToken, selec
         prompt: 'Architectural massing canary',
         fileNames: [attachment.name],
         imageSlot: actualSlot,
+        imageSize: '1024x1024',
         imageAspectRatio: '1:1',
         taskId: result.taskId,
         taskToken: result.taskToken,
