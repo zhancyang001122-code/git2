@@ -2,6 +2,11 @@ name: ArchFlow Production Health Check
 
 on:
   workflow_dispatch:
+    inputs:
+      image_slots:
+        description: Comma-separated image slots to verify
+        required: false
+        default: image1,image2
 
 permissions:
   contents: read
@@ -31,6 +36,7 @@ jobs:
           ARCHFLOW_MONITOR_EMAIL: ${{ secrets.ARCHFLOW_MONITOR_EMAIL }}
           ARCHFLOW_MONITOR_PASSWORD: ${{ secrets.ARCHFLOW_MONITOR_PASSWORD }}
           ARCHFLOW_HEALTH_TIMEOUT_MS: 60000
+          ARCHFLOW_HEALTH_IMAGE_SLOTS: ${{ inputs.image_slots || 'image1,image2' }}
         run: |
           set -o pipefail
           node scripts/health-check.mjs | tee health-report.json
