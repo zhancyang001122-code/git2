@@ -265,11 +265,11 @@ function legacyImageDefaults(slotNumber: number) {
     return {
       label: 'Git2 图 Gemini',
       baseUrl: 'https://img.yunfei.best',
-      model: 'gemini-3.1-flash-image-preview',
+      model: 'gemini-3-pro-image-preview',
       apiKey: env('git2图gemini'),
       protocol: 'gemini',
       responseMode: 'url',
-      size: '2K',
+      size: '4K',
     }
   }
   return {
