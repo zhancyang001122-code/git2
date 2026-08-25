@@ -72,6 +72,11 @@ test('长耗时 4K 请求转为服务端后台任务并由前端轮询', () => {
 test('第二供应商的 HTTP 或 HTTPS 成图会验真后持久化为私有 Storage 地址', () => {
   assert.match(source, /function validatedRemoteImageUrl/)
   assert.match(source, /\['http:', 'https:'\]\.includes\(parsed\.protocol\)/)
+  assert.match(source, /function remoteImagePortAllowed/)
+  assert.match(source, /port >= 1024 && port <= 65535/)
+  assert.match(source, /if \(parsed\.username \|\| parsed\.password\)/)
+  assert.match(source, /reason: 'embedded_credentials'/)
+  assert.match(source, /reason: 'restricted_port'/)
   assert.match(source, /privateIpv4Address\(hostname\)/)
   assert.match(source, /privateIpv6Address\(hostname\)/)
   assert.match(source, /redirect: 'manual'/)
