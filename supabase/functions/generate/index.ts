@@ -923,6 +923,12 @@ function privateIpv6Address(hostname: string) {
     || /^fe[89ab][0-9a-f]:/.test(normalized)
 }
 
+function remoteImagePortAllowed(portValue: string) {
+  if (!portValue) return true
+  const port = Number(portValue)
+  return Number.isInteger(port) && port >= 1024 && port <= 65535
+}
+
 function validatedRemoteImageUrl(value: string, base?: string) {
   let parsed: URL
   try {
@@ -933,8 +939,25 @@ function validatedRemoteImageUrl(value: string, base?: string) {
   if (!['http:', 'https:'].includes(parsed.protocol)) {
     throw new HttpError('Gemini 返回了不支持的图片地址协议。', 502)
   }
-  if (parsed.username || parsed.password || (parsed.port && !['80', '443'].includes(parsed.port))) {
-    throw new HttpError('Gemini 返回的图片地址包含不安全的连接信息。', 502)
+  if (parsed.username || parsed.password) {
+    console.warn(JSON.stringify({
+      event: 'managed_image_url_rejected',
+      reason: 'embedded_credentials',
+      protocol: parsed.protocol,
+      hostname: parsed.hostname,
+      port: parsed.port || 'default',
+    }))
+    throw new HttpError('Gemini 返回的图片地址包含不允许的账号信息。', 502)
+  }
+  if (!remoteImagePortAllowed(parsed.port)) {
+    console.warn(JSON.stringify({
+      event: 'managed_image_url_rejected',
+      reason: 'restricted_port',
+      protocol: parsed.protocol,
+      hostname: parsed.hostname,
+      port: parsed.port,
+    }))
+    throw new HttpError('Gemini 返回的图片地址使用了不允许的低位端口。', 502)
   }
   const hostname = parsed.hostname.toLowerCase()
   if (!hostname.includes('.')
