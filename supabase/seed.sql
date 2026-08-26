@@ -1,0 +1,3 @@
+-- Intentionally empty.
+-- Add development-only, non-sensitive seed data here when repeatable fixtures
+-- are needed. Never commit production users, API keys, or personal data.
