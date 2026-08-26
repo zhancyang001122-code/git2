@@ -25,7 +25,6 @@ create table public.assets (
   source text not null,
   tone text not null default 'aqua',
   artifacts jsonb not null default '[]'::jsonb check (jsonb_typeof(artifacts) = 'array'),
-  result_data jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

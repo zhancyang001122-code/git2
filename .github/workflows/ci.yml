@@ -39,3 +39,33 @@ jobs:
           VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_Gn8SniEtQm0cnqdEcIS8xw_HIwAl1a5
           VITE_INTERNAL_ACCOUNT_EMAIL: internal-account-1@archflow.local
         run: pnpm build
+
+  verify-database-migrations:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10.14.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Start local database
+        run: pnpm db:start
+
+      - name: Rebuild schema from migrations
+        run: pnpm db:reset
+
+      - name: Lint database schema
+        run: pnpm db:lint
+
+      - name: Stop local database
+        if: always()
+        run: pnpm exec supabase stop --no-backup

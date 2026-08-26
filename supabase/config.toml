@@ -1,4 +1,9 @@
 project_id = "mblnorfsegteomazffwy"
 
+[db]
+# Keep ArchFlow's local database isolated from other Supabase projects.
+port = 65432
+shadow_port = 65430
+
 [functions.generate]
 verify_jwt = true
