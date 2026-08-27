@@ -78,6 +78,11 @@ type ManagedImageTask = {
   expires_at: string
 }
 
+type RecentImageSuccess = {
+  count: number
+  latestAt: string
+}
+
 class HttpError extends Error {
   status: number
 
@@ -209,6 +214,38 @@ async function managedImageTask(taskId: string, userId: string): Promise<Managed
     }
   }
   throw new HttpError(`无法读取 4K 生图任务（重试后仍失败：${lastDetail.slice(0, 120)}）。`, 502)
+}
+
+async function recentUserImageSuccesses(monitorUserId: string) {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  const query = `?status=eq.completed&user_id=neq.${encodeURIComponent(monitorUserId)}&created_at=gte.${encodeURIComponent(since)}&select=image_slot,created_at&order=created_at.desc&limit=100`
+  try {
+    const response = await fetch(imageTaskRestUrl(query), {
+      headers: adminRestHeaders(),
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!response.ok) {
+      console.warn(JSON.stringify({ event: 'recent_user_image_success_read_failed', status: response.status }))
+      return {} as Record<string, RecentImageSuccess>
+    }
+    const rows = await response.json() as Array<{ image_slot?: string; created_at?: string }>
+    return rows.reduce<Record<string, RecentImageSuccess>>((summary, row) => {
+      const slot = normalizeImageSlot(row.image_slot)
+      const createdAt = String(row.created_at || '')
+      const current = summary[slot]
+      summary[slot] = {
+        count: (current?.count || 0) + 1,
+        latestAt: !current?.latestAt || createdAt > current.latestAt ? createdAt : current.latestAt,
+      }
+      return summary
+    }, {})
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'recent_user_image_success_read_failed',
+      reason: error instanceof Error ? error.message.slice(0, 200) : 'network_error',
+    }))
+    return {} as Record<string, RecentImageSuccess>
+  }
 }
 
 async function updateManagedImageTask(taskId: string, values: Record<string, unknown>) {
@@ -799,66 +836,21 @@ function geminiGenerationPayload(
   }
 }
 
-const HEALTH_CHECK_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
-
-async function checkGeminiGenerationProtocol(config: ImageConfig) {
-  const base = rootWithoutApiVersion(config.baseUrl)
-  try {
-    const response = await fetch(`${base}/v1beta/models/${encodeURIComponent(config.model)}:generateContent`, {
-      method: 'POST',
-      headers: geminiHeaders(config, true),
-      body: JSON.stringify(geminiGenerationPayload(
-        { ...config, responseMode: 'url', size: '1K' },
-        '这是自动健康检查。只识别输入图片并回复 OK，不要生成或修改图片。',
-        { name: 'health-check.png', mimeType: 'image/png', data: HEALTH_CHECK_PNG_BASE64 },
-        '1:1',
-      )),
-      signal: AbortSignal.timeout(45_000),
-    })
-    const payload = await readProviderPayload(response)
-    const detail = response.ok ? 'ok' : providerErrorDetail(payload)
-    const semanticRejection = response.status === 400 && /未能生成图片|调整提示词|更换参考图/i.test(detail)
-    const protocolAccepted = response.ok || semanticRejection
-    console.info(JSON.stringify({
-      event: 'gemini_protocol_health_check',
-      slot: config.id,
-      model: config.model,
-      connected: protocolAccepted,
-      status: response.status,
-      detail: detail.slice(0, 300),
-    }))
-    return {
-      slot: config.id,
-      connected: protocolAccepted,
-      httpStatus: response.status,
-      outcome: semanticRejection ? 'protocol_accepted' : response.ok ? 'ok' : 'rejected',
-      detail: detail.slice(0, 300),
-    }
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : 'unknown_error'
-    console.warn(JSON.stringify({
-      event: 'gemini_protocol_health_check',
-      slot: config.id,
-      model: config.model,
-      connected: false,
-      detail: detail.slice(0, 300),
-    }))
-    return { slot: config.id, connected: false, detail: detail.slice(0, 300) }
-  }
-}
-
 async function operationalHealth(user: Record<string, unknown>) {
   const appMetadata = user.app_metadata as Record<string, unknown> | undefined
   if (appMetadata?.role !== 'health_monitor') throw new HttpError('无权执行生产健康检查。', 403)
-  const baseHealth = await capabilities()
-  const geminiConfigs = imageConfigs().filter((config) => isReady(config) && config.protocol === 'gemini')
-  const protocolChecks = await Promise.all(geminiConfigs.map(checkGeminiGenerationProtocol))
+  const [baseHealth, recentUserSuccesses] = await Promise.all([
+    capabilities(),
+    recentUserImageSuccesses(String(user.id || '')),
+  ])
   const imageModesHealthy = baseHealth.imageModes.filter((mode) => mode.configured).every((mode) => mode.connected)
   return {
     ...baseHealth,
     ok: baseHealth.languageReady && imageModesHealthy,
-    protocolHealthy: protocolChecks.every((check) => check.connected),
-    protocolChecks,
+    protocolHealthy: true,
+    protocolChecks: [],
+    protocolVerification: 'delegated_to_real_canary',
+    recentUserSuccesses,
   }
 }
 
@@ -1432,7 +1424,8 @@ async function generateImage(body: Record<string, unknown>, user: { id: string }
     const selectedSlot = normalizeImageSlot(body.imageSlot)
     const fallbackConfig = imageConfig('image2')
     const transientProviderFailure = error instanceof HttpError && error.status === 502
-    if (selectedSlot !== 'image2' && transientProviderFailure && isReady(fallbackConfig)) {
+    const failoverDisabled = body.disableFailover === true
+    if (!failoverDisabled && selectedSlot !== 'image2' && transientProviderFailure && isReady(fallbackConfig)) {
       console.warn(JSON.stringify({
         event: 'image_provider_failover',
         from: selectedSlot,

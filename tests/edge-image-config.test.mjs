@@ -21,15 +21,17 @@ test('Gemini 图生图按服务商协议发送角色、参考图和可选原图�
   assert.match(source, /supportsOriginalRatio: true/)
 })
 
-test('生产健康检查以最小无敏感图片验证 Gemini 请求协议', () => {
-  assert.match(source, /HEALTH_CHECK_PNG_BASE64/)
-  assert.match(source, /geminiGenerationPayload\([\s\S]*?responseMode: 'url', size: '1K'/)
+test('生产健康检查复用真实 canary 且提供最近真实用户成功证据', () => {
   assert.match(source, /appMetadata\?\.role !== 'health_monitor'/)
   assert.match(source, /body\.action === 'health'/)
-  assert.match(source, /const protocolAccepted = response\.ok \|\| semanticRejection/)
-  assert.match(source, /outcome: semanticRejection \? 'protocol_accepted'/)
+  assert.match(source, /function recentUserImageSuccesses/)
+  assert.match(source, /status=eq\.completed&user_id=neq\./)
+  assert.match(source, /created_at=gte\./)
+  assert.match(source, /protocolVerification: 'delegated_to_real_canary'/)
+  assert.match(source, /recentUserSuccesses,/)
   assert.match(source, /ok: baseHealth\.languageReady && imageModesHealthy,/)
-  assert.match(source, /protocolHealthy: protocolChecks\.every\(\(check\) => check\.connected\)/)
+  assert.doesNotMatch(source, /checkGeminiGenerationProtocol/)
+  assert.doesNotMatch(source, /HEALTH_CHECK_PNG_BASE64/)
 })
 
 test('第二路 Gemini 使用 URL 响应并遵守每次请求的图片档位', () => {
@@ -88,7 +90,8 @@ test('第二供应商的 HTTP 或 HTTPS 成图会验真后持久化为私有 Sto
 
 test('第一路供应商暂时不可用时自动切换到第二路生图', () => {
   assert.match(source, /event: 'image_provider_failover'/)
-  assert.match(source, /selectedSlot !== 'image2' && transientProviderFailure/)
+  assert.match(source, /const failoverDisabled = body\.disableFailover === true/)
+  assert.match(source, /!failoverDisabled && selectedSlot !== 'image2' && transientProviderFailure/)
   assert.match(source, /generateImageWithSelectedProvider\(\{ \.\.\.body, imageSlot: 'image2' \}, user\)/)
 })
 
