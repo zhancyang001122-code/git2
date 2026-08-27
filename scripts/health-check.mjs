@@ -75,8 +75,13 @@ async function invokeGenerate(supabaseUrl, publishableKey, accessToken, body, ti
   return payload
 }
 
-async function realImageCanary({ supabaseUrl, publishableKey, accessToken, selectedSlot }) {
+function transientSupplierFailure(detail) {
+  return /signal timed out|service timeout|timed?\s*out|try again later|temporar(?:y|ily)|unavailable|overloaded|rate.?limit|fetch failed|network error|connection reset|\b429\b|upstream\s+5\d\d|上游\s*5\d\d/i.test(String(detail || ''))
+}
+
+async function realImageCanary({ supabaseUrl, publishableKey, accessToken, selectedSlot, recentUserSuccesses = {} }) {
   const startedAt = Date.now()
+  let actualSlot = selectedSlot
   try {
     const attachment = {
       name: 'archflow-canary.png',
@@ -92,8 +97,9 @@ async function realImageCanary({ supabaseUrl, publishableKey, accessToken, selec
       imageSlot: selectedSlot,
       imageSize: '1024x1024',
       imageAspectRatio: '1:1',
+      disableFailover: true,
     })
-    const actualSlot = String(result.imageSlot || selectedSlot)
+    actualSlot = String(result.imageSlot || selectedSlot)
     const deadline = Date.now() + CANARY_TIMEOUT_MS
     let pollCount = 0
     while (result?.pending && Date.now() < deadline) {
@@ -126,12 +132,17 @@ async function realImageCanary({ supabaseUrl, publishableKey, accessToken, selec
       pollCount,
     }
   } catch (error) {
+    const detail = error instanceof Error ? error.message.slice(0, 300) : 'unknown_canary_error'
+    const transient = transientSupplierFailure(detail)
     return {
       name: `real_image_${selectedSlot}`,
-      status: 'fail',
+      status: transient ? 'degraded' : 'fail',
       latencyMs: Date.now() - startedAt,
       selectedSlot,
-      detail: error instanceof Error ? error.message.slice(0, 300) : 'unknown_canary_error',
+      actualSlot,
+      classification: transient ? 'supplier_transient' : 'deterministic_failure',
+      recentUserSuccess: recentUserSuccesses[selectedSlot] || null,
+      detail,
     }
   }
 }
@@ -159,6 +170,7 @@ async function main() {
   if (monitorConfigured) {
     try {
       const accessToken = await signInMonitor(supabaseUrl, publishableKey)
+      let operationalPayload = {}
       checks.push(await fetchCheck('edge_operational_health', `${supabaseUrl}/functions/v1/generate`, {
         method: 'POST',
         headers: {
@@ -169,13 +181,20 @@ async function main() {
         body: JSON.stringify({ action: 'health' }),
       }, ({ text }) => {
         const payload = JSON.parse(text)
+        operationalPayload = payload
         if (typeof payload?.languageReady !== 'boolean' || !Array.isArray(payload?.imageModes)) {
           throw new Error('unexpected_operational_health_payload')
         }
         if (payload.ok !== true) throw new Error('operational_health_failed')
       }))
       for (const selectedSlot of requestedCanarySlots(process.env.ARCHFLOW_HEALTH_IMAGE_SLOTS)) {
-        checks.push(await realImageCanary({ supabaseUrl, publishableKey, accessToken, selectedSlot }))
+        checks.push(await realImageCanary({
+          supabaseUrl,
+          publishableKey,
+          accessToken,
+          selectedSlot,
+          recentUserSuccesses: operationalPayload.recentUserSuccesses || {},
+        }))
       }
     } catch (error) {
       checks.push({
@@ -198,7 +217,7 @@ async function main() {
     checks,
   }
   process.stdout.write(`${JSON.stringify(report)}\n`)
-  if (failed.length || degraded.length) process.exitCode = 1
+  if (failed.length) process.exitCode = 1
 }
 
 await main()

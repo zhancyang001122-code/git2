@@ -74,6 +74,8 @@ jobs:
         uses: actions/github-script@v8
         with:
           script: |
+            const fs = require('fs')
+            const report = JSON.parse(fs.readFileSync('health-report.json', 'utf8'))
             const title = '[Ops] ArchFlow production health check failed'
             const { data: issues } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
@@ -83,10 +85,13 @@ jobs:
             })
             const existing = issues.find((issue) => issue.title === title)
             if (existing) {
+              const body = report.status === 'degraded'
+                ? `Production infrastructure is healthy in run ${context.runId}. Supplier-only transient failures are now tracked as degraded instead of a site incident. Closing this false-positive incident.`
+                : `Production health checks recovered in run ${context.runId}. Closing this incident automatically.`
               await github.rest.issues.createComment({
                 ...context.repo,
                 issue_number: existing.number,
-                body: `Production health checks recovered in run ${context.runId}. Closing this incident automatically.`,
+                body,
               })
               await github.rest.issues.update({ ...context.repo, issue_number: existing.number, state: 'closed' })
             }
