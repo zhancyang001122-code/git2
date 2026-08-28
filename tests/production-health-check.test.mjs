@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
+import { transientSupplierFailure } from '../scripts/health-classification.mjs'
 
 const script = await readFile(new URL('../scripts/health-check.mjs', import.meta.url), 'utf8')
 const workflow = await readFile(new URL('../.github/workflows/health-check.yml', import.meta.url), 'utf8')
@@ -14,8 +15,7 @@ test('生产巡检会隔离两路生图并把供应商瞬态失败降级而非�
   assert.match(script, /action: 'image-task-status'/)
   assert.match(script, /imageSize: '1024x1024'/)
   assert.match(script, /disableFailover: true/)
-  assert.match(script, /function transientSupplierFailure/)
-  assert.match(script, /上游\\s\*5\\d\\d/)
+  assert.match(script, /import \{ transientSupplierFailure \} from '\.\/health-classification\.mjs'/)
   assert.match(script, /status: transient \? 'degraded' : 'fail'/)
   assert.match(script, /classification: transient \? 'supplier_transient' : 'deterministic_failure'/)
   assert.match(script, /recentUserSuccess: recentUserSuccesses\[selectedSlot\] \|\| null/)
@@ -25,6 +25,16 @@ test('生产巡检会隔离两路生图并把供应商瞬态失败降级而非�
   assert.match(script, /if \(failed\.length\) process\.exitCode = 1/)
   assert.doesNotMatch(script, /if \(failed\.length \|\| degraded\.length\) process\.exitCode = 1/)
 })
+
+test('供应商 API 500 和网络请求错误会降级，确定性输入错误仍会失败', () => {
+  assert.equal(transientSupplierFailure('Gemini 生图 API 500: upstream error: do request failed'), true)
+  assert.equal(transientSupplierFailure('HTTP 503: Service Unavailable'), true)
+  assert.equal(transientSupplierFailure('图生图服务请求失败（上游 500）'), true)
+  assert.equal(transientSupplierFailure('Gemini 生图 API 400: service timeout, please try again later.'), true)
+  assert.equal(transientSupplierFailure('invalid API key'), false)
+  assert.equal(transientSupplierFailure('unsupported image size'), false)
+})
+
 test('生产巡检由十八小时 Codex 自动运维单一调度并为真实成图预留足够时间', () => {
   assert.match(workflow, /workflow_dispatch:/)
   assert.match(workflow, /image_slots:/)
