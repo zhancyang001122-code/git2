@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { transientSupplierFailure } from './health-classification.mjs'
+
 const DEFAULT_PUBLIC_URL = 'https://archflow.zaneyang.xyz/'
 const DEFAULT_SUPABASE_URL = 'https://mblnorfsegteomazffwy.supabase.co'
 const DEFAULT_TIMEOUT_MS = 12_000
@@ -73,10 +75,6 @@ async function invokeGenerate(supabaseUrl, publishableKey, accessToken, body, ti
     throw new Error(String(payload?.error || `HTTP ${response.status}`).slice(0, 300))
   }
   return payload
-}
-
-function transientSupplierFailure(detail) {
-  return /signal timed out|service timeout|timed?\s*out|try again later|temporar(?:y|ily)|unavailable|overloaded|rate.?limit|fetch failed|network error|connection reset|\b429\b|upstream\s+5\d\d|上游\s*5\d\d/i.test(String(detail || ''))
 }
 
 async function realImageCanary({ supabaseUrl, publishableKey, accessToken, selectedSlot, recentUserSuccesses = {} }) {
