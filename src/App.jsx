@@ -977,6 +977,12 @@ function DesignOutput({ data, selected, onSelect }) {
   )
 }
 
+function GeneratedPreviewImage({ src, alt }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) return <div className="generated-image-error" role="alert">生成图无法加载，请重新生成或检查图片服务返回的数据。</div>
+  return <img src={src} alt={alt} decoding="async" draggable="false" onError={() => setFailed(true)} />
+}
+
 function BeautifyOutput({ images, originalImageUrl }) {
   const [position, setPosition] = useState(54)
   const beautified = images?.[0]
@@ -986,7 +992,7 @@ function BeautifyOutput({ images, originalImageUrl }) {
       <div className="result-section-head"><div><span>01</span><h3>图纸前后对比</h3></div><p>拖动中线查看增强效果；原图线稿、文字和尺寸关系保持不变。</p></div>
       <article className="render-compare-card beautify-compare-card">
         <div className="render-compare beautify-compare" style={{ '--compare-position': `${position}%` }}>
-          <div className={`render-compare-layer drawing is-generated ${beautified?.imageUrl ? 'has-real-image' : ''}`}>{beautified?.imageUrl ? <img src={beautified.imageUrl} alt="AI 图纸美化后" /> : drawing}<span className="compare-label is-after">美化后</span></div>
+          <div className={`render-compare-layer drawing is-generated ${beautified?.imageUrl ? 'has-real-image' : ''}`}>{beautified?.imageUrl ? <GeneratedPreviewImage key={beautified.imageUrl} src={beautified.imageUrl} alt="AI 图纸美化后" /> : drawing}<span className="compare-label is-after">美化后</span></div>
           <div className={`render-compare-layer drawing is-original ${originalImageUrl ? 'has-real-image' : ''}`}>{originalImageUrl ? <img src={originalImageUrl} alt="上传的原始图纸" /> : drawing}<span className="compare-label is-before">原图</span></div>
           <span className="compare-line" aria-hidden="true"><i><MousePointer2 /></i></span>
           <input aria-label="拖动查看原图和图纸美化效果" type="range" min="0" max="100" value={position} onInput={(event) => setPosition(Number(event.currentTarget.value))} onChange={(event) => setPosition(Number(event.currentTarget.value))} />
@@ -1032,7 +1038,7 @@ function RenderOutput({ images, originalImageUrl, onDialog }) {
       <article className="render-compare-card">
         <div className="render-compare" style={{ '--compare-position': `${position}%` }}>
           <div className={`render-compare-layer is-generated ${render.className || ''} ${render.imageUrl ? 'has-real-image' : ''}`}>
-            {render.imageUrl ? <img src={render.imageUrl} alt="AI 渲染生成后" /> : mockBuilding}
+            {render.imageUrl ? <GeneratedPreviewImage key={render.imageUrl} src={render.imageUrl} alt="AI 渲染生成后" /> : mockBuilding}
             <span className="compare-label is-after">生成后</span>
           </div>
           <div className={`render-compare-layer is-original ${originalImageUrl ? 'has-real-image' : ''}`}>
@@ -1178,7 +1184,7 @@ function Dialog({ data, onClose, onDelete, onToast, onApiChanged, session, authR
       <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
         <section className="dialog-card render-dialog" role="dialog" aria-modal="true" aria-label={data.item.title}>
           <button ref={closeRef} className="icon-button dialog-close" onClick={onClose} aria-label="关闭"><X /></button>
-          <div className={`dialog-render-art ${data.item.className || ''} ${data.item.imageUrl ? 'has-real-image' : ''}`}>{data.item.imageUrl ? <img src={data.item.imageUrl} alt={data.item.title} /> : <><span className="render-building"><i/><i/><i/></span><span className="render-water"/><span className="render-people"><i/><i/><i/></span></>}</div>
+          <div className={`dialog-render-art ${data.item.className || ''} ${data.item.imageUrl ? 'has-real-image' : ''}`}>{data.item.imageUrl ? <GeneratedPreviewImage key={data.item.imageUrl} src={data.item.imageUrl} alt={data.item.title} /> : <><span className="render-building"><i/><i/><i/></span><span className="render-water"/><span className="render-people"><i/><i/><i/></span></>}</div>
           <div className="dialog-render-copy"><div><span className="eyebrow">AI RENDER PREVIEW</span><h2>{data.item.title}</h2><p>{data.item.meta} · 主体与构图已锁定</p></div><button className="button button-primary" onClick={() => data.item.imageUrl ? downloadGeneratedAsset(data.item.imageUrl, `ArchFlow-render-${data.item.id}.png`) : downloadDemo(`ArchFlow-render-${data.item.id}.jpg`)}>下载原图 <Download /></button></div>
         </section>
       </div>
@@ -1352,7 +1358,7 @@ function ImageApiSection({ slotNumber, slot, check, onChange, onProviderChange, 
         {providerConfig.customBase
           ? <label><span>Base URL</span><input value={slot.baseUrl} onChange={(event) => onChange({ baseUrl: event.target.value })} placeholder="https://provider.example/v1" /></label>
           : <div className="preset-connection"><span>内置地址</span><strong>{providerConfig.baseUrl}</strong></div>}
-        {providerConfig.customModel && <label className="full-field"><span>模型 ID</span><input value={slot.model} onChange={(event) => onChange({ model: event.target.value })} placeholder="例如 gpt-image-2 或服务商提供的 Gemini 模型 ID" /></label>}
+        {providerConfig.customModel && <label className="full-field"><span>模型 ID</span><input value={slot.model} onChange={(event) => onChange({ model: event.target.value })} placeholder="例如 gpt-image2.5 或服务商提供的 Gemini 模型 ID" /></label>}
         <div className="api-key-field full-field">
           <label htmlFor={fieldId}>生图 API {slotNumber} Key</label>
           <div className="api-key-control"><input id={fieldId} type="password" value={slot.apiKey} onChange={(event) => onChange({ apiKey: event.target.value })} placeholder={`请输入生图 API ${slotNumber} Key`} autoComplete="off" /><button type="button" onClick={onApply} disabled={check.status === 'checking'}>{check.status === 'checking' ? <LoaderCircle className="spin" /> : <Link2 />} 应用 Key</button></div>

@@ -178,7 +178,7 @@ export const builtInModels = Object.freeze({
   image: Object.freeze({
     label: '生图大模型',
     baseUrl: presetEnv.VITE_IMAGE_BASE_URL || 'https://api.openai.com/v1',
-    model: presetEnv.VITE_IMAGE_MODEL || 'gpt-image-2',
+    model: presetEnv.VITE_IMAGE_MODEL || 'gpt-image2.5',
     size: presetEnv.VITE_IMAGE_SIZE || '4K',
   }),
 })
@@ -215,7 +215,7 @@ export const modelProviders = Object.freeze({
       label: '第三方生图服务',
       protocol: 'newapi-auto',
       baseUrl: 'https://img.yunfei.best',
-      model: 'gpt-image-2',
+      model: 'gpt-image2.5',
       customBase: false,
       customModel: true,
     }),

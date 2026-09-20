@@ -12,7 +12,7 @@ VITE_INTERNAL_ACCOUNT_EMAIL
 
 这三项属于浏览器公开配置，不是服务端密钥。`src/lib/supabase.js` 为面试演示保留同项目的公开兜底值，防止部署变量漏配导致跨设备登录入口失效；正式轮换 Supabase 项目或 publishable key 时，需要同时更新部署变量和兜底值。
 
-`generate` Edge Function 已内置当前演示使用的百炼 Base URL、`qwen3.7-plus` 与第三方生图 Base URL、`gpt-image-2`。必须配置以下两个服务端 Key：
+`generate` Edge Function 已内置当前演示使用的百炼 Base URL、`qwen3.7-plus` 与第三方生图 Base URL、`gpt-image2.5`。必须配置以下两个服务端 Key：
 
 ```text
 ARCHFLOW_LLM_API_KEY
