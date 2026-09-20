@@ -112,6 +112,8 @@ test('第一路供应商暂时不可用时自动切换到第二路生图', () =>
 
 test('第一路大图通过后台任务持久化，浏览器只接收签名图片地址', () => {
   assert.match(source, /EdgeRuntime\.waitUntil\(runManagedOpenAIImageTask\(/)
+  assert.match(source, /form\.append\('response_format', 'url'\)/)
+  assert.match(source, /if \(typeof item\?\.url === 'string' && item\.url\) \{\s*durableImageUrl = await storeManagedImageOutput\(taskId, userId, item\.url, taskDeadline\)/)
   assert.match(source, /return pendingImageTask\(\{ id: taskId, poll_after_ms: 2000 \}, config, user\.id, slot\)/)
   assert.match(source, /image_slot\?: string/)
   assert.match(source, /select=id,image_slot,status,image_url,error_message,created_at,expires_at/)

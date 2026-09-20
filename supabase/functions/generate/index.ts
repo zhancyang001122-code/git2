@@ -1122,7 +1122,9 @@ async function runManagedOpenAIImageTask(
     form.append('quality', config.quality)
     form.append('output_format', 'png')
     form.append('output_compression', '100')
-    form.append('response_format', 'b64_json')
+    // The provider's default URL response avoids parsing a multi-megabyte 4K
+    // Base64 JSON payload inside a memory/CPU-constrained Edge background task.
+    form.append('response_format', 'url')
     const response = await fetch(`${rootWithoutApiVersion(config.baseUrl)}/v1/images/edits`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${config.apiKey}` },
@@ -1140,7 +1142,9 @@ async function runManagedOpenAIImageTask(
     const data = Array.isArray(payload.data) ? payload.data as Record<string, unknown>[] : []
     const item = data[0]
     let durableImageUrl = ''
-    if (typeof item?.b64_json === 'string' && item.b64_json) {
+    if (typeof item?.url === 'string' && item.url) {
+      durableImageUrl = await storeManagedImageOutput(taskId, userId, item.url, taskDeadline)
+    } else if (typeof item?.b64_json === 'string' && item.b64_json) {
       let decoded: ReturnType<typeof decodeProviderImage>
       try {
         decoded = decodeProviderImage(item.b64_json)
@@ -1148,8 +1152,6 @@ async function runManagedOpenAIImageTask(
         throw new HttpError('生图服务返回的图片数据无法解码。', 502)
       }
       durableImageUrl = await storeManagedImageBytes(taskId, userId, decoded.bytes, decoded.declaredType, taskDeadline)
-    } else if (typeof item?.url === 'string' && item.url) {
-      durableImageUrl = await storeManagedImageOutput(taskId, userId, item.url, taskDeadline)
     }
     if (!durableImageUrl) throw new HttpError('图像 API 已响应，但没有返回可显示的图片。', 502)
     if (!await updateManagedImageTask(taskId, { status: 'completed', image_url: durableImageUrl, error_message: null })) {
