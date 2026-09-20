@@ -4,3 +4,8 @@ export function resolveImageModel(slotNumber, configuredModel, defaultModel) {
   if (slotNumber === 1 && ['gpt-image-2', 'gpt-image2.5'].includes(configuredModel)) return defaultModel
   return configuredModel || defaultModel
 }
+
+export function resolveImageLabel(slotNumber, configuredLabel, defaultLabel) {
+  if (slotNumber === 1 && configuredLabel === 'GPT Image 2') return 'GPT Image 2.5'
+  return configuredLabel || defaultLabel
+}

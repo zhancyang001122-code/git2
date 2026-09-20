@@ -1,6 +1,6 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { decodeProviderImage } from '../_shared/provider-image.js'
-import { resolveImageModel } from '../_shared/image-model.js'
+import { resolveImageLabel, resolveImageModel } from '../_shared/image-model.js'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -329,7 +329,7 @@ function imageConfig(slot: string): ImageConfig {
   const apiKeySecretName = env(`${prefix}_API_KEY_SECRET`)
   return {
     id: slot,
-    label: readableLabel(env(`${prefix}_LABEL`), defaults.label),
+    label: readableLabel(resolveImageLabel(slotNumber, env(`${prefix}_LABEL`), defaults.label), defaults.label),
     baseUrl: env(`${prefix}_BASE_URL`) || defaults.baseUrl,
     model: resolveImageModel(slotNumber, env(`${prefix}_MODEL`), defaults.model),
     apiKey: env(`${prefix}_API_KEY`) || (apiKeySecretName ? env(apiKeySecretName) : defaults.apiKey),
