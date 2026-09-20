@@ -1,5 +1,6 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { decodeProviderImage } from '../_shared/provider-image.js'
+import { resolveImageModel } from '../_shared/image-model.js'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -330,7 +331,7 @@ function imageConfig(slot: string): ImageConfig {
     id: slot,
     label: readableLabel(env(`${prefix}_LABEL`), defaults.label),
     baseUrl: env(`${prefix}_BASE_URL`) || defaults.baseUrl,
-    model: env(`${prefix}_MODEL`) || defaults.model,
+    model: resolveImageModel(slotNumber, env(`${prefix}_MODEL`), defaults.model),
     apiKey: env(`${prefix}_API_KEY`) || (apiKeySecretName ? env(apiKeySecretName) : defaults.apiKey),
     protocol: env(`${prefix}_PROTOCOL`) || defaults.protocol,
     responseMode: env(`${prefix}_RESPONSE_MODE`) === 'url' ? 'url' : defaults.responseMode,
