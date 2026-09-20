@@ -5,7 +5,7 @@ import test from 'node:test'
 const source = await readFile(new URL('../supabase/functions/generate/index.ts', import.meta.url), 'utf8')
 
 test('第一路默认模型与新供应商模型一致，且成图按文件内容确定类型', () => {
-  assert.match(source, /model: 'gpt-image2\.5'/)
+  assert.match(source, /model: 'gpt-image-2\.5-flare'/)
   assert.match(source, /model: resolveImageModel\(slotNumber, env\(`\$\{prefix\}_MODEL`\), defaults\.model\)/)
   assert.match(source, /imageUrl = providerImageDataUrl\(item\.b64_json\)/)
   assert.match(source, /const contentType = providerImageType\(bytes, declaredType\)/)

@@ -293,7 +293,7 @@ function legacyImageDefaults(slotNumber: number) {
     return {
       label: '第三方生图服务',
       baseUrl: 'https://img.yunfei.best',
-      model: 'gpt-image2.5',
+      model: 'gpt-image-2.5-flare',
       apiKey: env('生图api 4k'),
       protocol: 'auto',
       responseMode: 'inline',

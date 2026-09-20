@@ -27,7 +27,7 @@ const baseConfig = {
   llmModel: 'qwen-plus',
   llmApiKey: 'test-language-key',
   imageProvider: 'yunfei',
-  imageModel: 'gpt-image2.5',
+  imageModel: 'gpt-image-2.5-flare',
   imageApiKey: 'test-image-key',
   imageVerified: true,
 }
@@ -103,7 +103,7 @@ test('AI 渲染使用单张图生图接口并返回原图对比数据', async ()
   const image = new File([new Uint8Array([137, 80, 78, 71])], 'white-model.png', { type: 'image/png' })
   const result = await generateWithApi({ feature: 'render', prompt: '蓝调时刻', files: [image], options: { imageSize: '3840x2160', imageAspectRatio: '16:9' } })
   assert.equal(request.url, 'https://img.yunfei.best/v1/images/edits')
-  assert.equal(request.options.body.get('model'), 'gpt-image2.5')
+  assert.equal(request.options.body.get('model'), 'gpt-image-2.5-flare')
   assert.equal(request.options.body.get('n'), '1')
   assert.equal(request.options.body.get('response_format'), 'b64_json')
   assert.equal(request.options.body.get('size'), '3840x2160')
