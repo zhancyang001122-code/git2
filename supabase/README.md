@@ -44,4 +44,6 @@ ARCHFLOW_IMAGE_2_SIZE=4K
 
 `ARCHFLOW_IMAGE_*_PROTOCOL` 可设为 `openai`、`gemini` 或 `auto`，必须与该服务商为具体模型开放的端点一致；不能只根据“NewAPI”这个网关类型推断协议。`ARCHFLOW_IMAGE_*_RESPONSE_MODE` 可设为 `inline` 或 `url`，只有服务商明确支持 URL 响应时才使用 `url`。`ARCHFLOW_IMAGE_*_SIZE` 是没有传入本次输出图幅时的默认值；前端可按次传入 64–4096 像素自定义宽高，或读取参考图比例并将最长边换算为 3840 像素。连接检测结果会随能力接口下发；检测失败的已配置槽位仍会显示，避免把“连接异常”误表现为“没有安装”。
 
+第一路旧的 `ARCHFLOW_IMAGE_1_MODEL=gpt-image-2` 覆盖值会自动迁移为当前内置的 `gpt-image2.5`；其他自定义模型 ID 保持原值。生产环境也应在可行时将该非密钥配置直接改为新 ID，避免依赖兼容逻辑。
+
 这些 Key 只能放在 Supabase Secrets 中，不能使用 `VITE_` 前缀，也不能提交到 Git。
