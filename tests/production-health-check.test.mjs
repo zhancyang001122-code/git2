@@ -21,6 +21,8 @@ test('生产巡检会隔离两路生图并把供应商瞬态失败降级而非�
   assert.match(script, /classification: transient \? 'supplier_transient' : 'deterministic_failure'/)
   assert.match(script, /recentUserSuccess: recentUserSuccesses\[selectedSlot\] \|\| null/)
   assert.match(script, /canary_missing_final_image/)
+  assert.match(script, /canary_image_not_fetchable_http_/)
+  assert.match(script, /canary_image_not_decodable/)
   assert.match(script, /actualSlot === selectedSlot \? 'pass' : 'degraded'/)
   assert.match(script, /if \(payload\.ok !== true\) throw new Error\('operational_health_failed'\)/)
   assert.match(script, /if \(failed\.length\) process\.exitCode = 1/)

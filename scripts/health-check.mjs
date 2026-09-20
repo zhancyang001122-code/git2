@@ -127,6 +127,26 @@ async function realImageCanary({ supabaseUrl, publishableKey, accessToken, selec
     if (!imageUrl.startsWith('data:image/') && !imageUrl.startsWith('https://')) {
       throw new Error('canary_missing_final_image')
     }
+    if (imageUrl.startsWith('https://')) {
+      const imageResponse = await fetch(imageUrl, {
+        headers: { Range: 'bytes=0-31' },
+        signal: AbortSignal.timeout(15_000),
+      })
+      if (!imageResponse.ok) throw new Error(`canary_image_not_fetchable_http_${imageResponse.status}`)
+      const reader = imageResponse.body?.getReader()
+      const header = []
+      while (reader && header.length < 12) {
+        const chunk = await reader.read()
+        if (chunk.done) break
+        header.push(...chunk.value.slice(0, 12 - header.length))
+      }
+      await reader?.cancel()
+      const bytes = Uint8Array.from(header)
+      const png = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
+      const jpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+      const webp = String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP'
+      if (!png && !jpeg && !webp) throw new Error('canary_image_not_decodable')
+    }
     return {
       name: `real_image_${selectedSlot}`,
       status: actualSlot === selectedSlot ? 'pass' : 'degraded',

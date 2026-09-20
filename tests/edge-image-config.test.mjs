@@ -7,8 +7,9 @@ const source = await readFile(new URL('../supabase/functions/generate/index.ts',
 test('第一路默认模型与新供应商模型一致，且成图按文件内容确定类型', () => {
   assert.match(source, /model: 'gpt-image-2\.5-flare'/)
   assert.match(source, /model: resolveImageModel\(slotNumber, env\(`\$\{prefix\}_MODEL`\), defaults\.model\)/)
-  assert.match(source, /imageUrl = providerImageDataUrl\(item\.b64_json\)/)
-  assert.match(source, /const contentType = providerImageType\(bytes, declaredType\)/)
+  assert.match(source, /decoded = decodeProviderImage\(item\.b64_json\)/)
+  assert.match(source, /storeManagedImageBytes\(taskId, userId, decoded\.bytes, decoded\.declaredType, taskDeadline\)/)
+  assert.match(source, /const contentType = imageTypeFromBytes\(bytes, declaredType\)/)
   assert.doesNotMatch(source, /imageUrl = `data:image\/png;base64,\$\{item\.b64_json\}`/)
   assert.doesNotMatch(source, /imageResponse\.headers\.get\('content-type'\) \|\| 'image\/png'/)
 })
@@ -75,7 +76,7 @@ test('长耗时 4K 请求转为服务端后台任务并由前端轮询', () => {
   assert.match(source, /boundedTaskTimeout\(taskDeadline, 110_000\)/)
   assert.doesNotMatch(source, /service timeout\|timed\?\\s\*out/)
   assert.match(source, /MANAGED_TASK_TIMEOUT_MS = 135_000/)
-  assert.match(source, /status: 'failed',[\s\S]*?Gemini 4K 后台任务超过 135 秒仍未完成/)
+  assert.match(source, /status: 'failed',[\s\S]*?后台生图任务超过 135 秒仍未完成/)
   assert.match(source, /status=eq\.processing&select=id/)
   assert.match(source, /image_task_update_skipped/)
 })
@@ -105,6 +106,19 @@ test('第一路供应商暂时不可用时自动切换到第二路生图', () =>
   assert.match(source, /return await generateImageWithSelectedProvider\(\{ \.\.\.body, imageSlot: 'image2' \}, user\)/)
   assert.match(source, /已切换生图大模型2，但第二路也失败/)
   assert.match(source, /imageSlot: config\.id/)
+  assert.match(source, /!providerCompleted && config\.id !== 'image2' && transientFailure/)
+  assert.match(source, /runManagedGeminiTask\([\s\S]*?geminiImageSizeForRequest\(imageSize, fallbackConfig\), taskDeadline/)
+})
+
+test('第一路大图通过后台任务持久化，浏览器只接收签名图片地址', () => {
+  assert.match(source, /EdgeRuntime\.waitUntil\(runManagedOpenAIImageTask\(/)
+  assert.match(source, /return pendingImageTask\(\{ id: taskId, poll_after_ms: 2000 \}, config, user\.id, slot\)/)
+  assert.match(source, /image_slot\?: string/)
+  assert.match(source, /select=id,image_slot,status,image_url,error_message,created_at,expires_at/)
+  assert.match(source, /return imageResult\(body, resultConfig, feature, managedTask\.image_url/)
+  assert.match(source, /storeManagedImageBytes\(taskId, userId, decoded\.bytes/)
+  assert.match(source, /storage\/v1\/object\/sign/)
+  assert.doesNotMatch(source, /return `data:\$\{contentType\};base64,\$\{base64\}`/)
 })
 
 test('云端生图会校验真实图片类型而不是盲信浏览器 MIME', () => {
