@@ -4,6 +4,14 @@ import test from 'node:test'
 
 const source = await readFile(new URL('../supabase/functions/generate/index.ts', import.meta.url), 'utf8')
 
+test('第一路默认模型与新供应商模型一致，且成图按文件内容确定类型', () => {
+  assert.match(source, /model: 'gpt-image2\.5'/)
+  assert.match(source, /imageUrl = providerImageDataUrl\(item\.b64_json\)/)
+  assert.match(source, /const contentType = providerImageType\(bytes, declaredType\)/)
+  assert.doesNotMatch(source, /imageUrl = `data:image\/png;base64,\$\{item\.b64_json\}`/)
+  assert.doesNotMatch(source, /imageResponse\.headers\.get\('content-type'\) \|\| 'image\/png'/)
+})
+
 test('第二路 NewAPI 使用独立密钥、真实模型和 Gemini 原生图生图协议', () => {
   assert.match(source, /env\('git2图gemini'\)/)
   assert.match(source, /model: 'gemini-3-pro-image-preview'/)

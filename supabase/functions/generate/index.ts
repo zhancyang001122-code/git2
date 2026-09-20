@@ -1,4 +1,5 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
+import { decodeProviderImage } from '../_shared/provider-image.js'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -291,7 +292,7 @@ function legacyImageDefaults(slotNumber: number) {
     return {
       label: '第三方生图服务',
       baseUrl: 'https://img.yunfei.best',
-      model: 'gpt-image-2',
+      model: 'gpt-image2.5',
       apiKey: env('生图api 4k'),
       protocol: 'auto',
       responseMode: 'inline',
@@ -1220,6 +1221,28 @@ function imageTypeFromBytes(bytes: Uint8Array, declaredType: string) {
   throw new HttpError(`生图服务返回的文件不是有效的 PNG、JPG 或 WEBP 图片（${type || '未知类型'}）。`, 415)
 }
 
+function providerImageDataUrl(value: string) {
+  let decoded: ReturnType<typeof decodeProviderImage>
+  try {
+    decoded = decodeProviderImage(value)
+  } catch {
+    throw new HttpError('生图服务返回的图片数据无法解码。', 502)
+  }
+  const { bytes, base64, declaredType } = decoded
+  if (!bytes.length) throw new HttpError('生图服务返回了空图片。', 502)
+  if (bytes.length > ASSET_MAX_BYTES) throw new HttpError('生图服务返回的图片超过 40 MiB 上限。', 502)
+  const contentType = providerImageType(bytes, declaredType)
+  return `data:${contentType};base64,${base64}`
+}
+
+function providerImageType(bytes: Uint8Array, declaredType: string) {
+  try {
+    return imageTypeFromBytes(bytes, declaredType)
+  } catch {
+    throw new HttpError('生图服务返回的成图不是有效的 PNG、JPG 或 WEBP 图片。', 502)
+  }
+}
+
 function storageImageName(value: unknown, contentType: string) {
   const extension = contentType === 'image/jpeg' ? 'jpg' : contentType === 'image/webp' ? 'webp' : 'png'
   const base = String(value || 'generated-image')
@@ -1403,13 +1426,12 @@ async function generateImageWithSelectedProvider(body: Record<string, unknown>, 
     }
     const data = Array.isArray(payload.data) ? payload.data as Record<string, unknown>[] : []
     const item = data[0]
-    if (item?.b64_json) {
-      imageUrl = `data:image/png;base64,${item.b64_json}`
-    } else if (item?.url) {
-      const imageResponse = await fetch(item.url)
-      if (!imageResponse.ok) throw new Error(`生成图下载失败（${imageResponse.status}）。`)
-      const bytes = new Uint8Array(await imageResponse.arrayBuffer())
-      imageUrl = `data:${imageResponse.headers.get('content-type') || 'image/png'};base64,${encodeBase64(bytes)}`
+    if (typeof item?.b64_json === 'string' && item.b64_json) {
+      imageUrl = providerImageDataUrl(item.b64_json)
+    } else if (typeof item?.url === 'string' && item.url) {
+      const { bytes, declaredType } = await downloadRemoteImage(item.url, Date.now() + REMOTE_IMAGE_DOWNLOAD_TIMEOUT_MS)
+      const contentType = providerImageType(bytes, declaredType)
+      imageUrl = `data:${contentType};base64,${encodeBase64(bytes)}`
     }
     if (!imageUrl) throw new Error('图像 API 已响应，但没有返回可显示的图片。')
   }
