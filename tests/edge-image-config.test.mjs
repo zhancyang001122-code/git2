@@ -101,7 +101,10 @@ test('第一路供应商暂时不可用时自动切换到第二路生图', () =>
   assert.match(source, /event: 'image_provider_failover'/)
   assert.match(source, /const failoverDisabled = body\.disableFailover === true/)
   assert.match(source, /!failoverDisabled && selectedSlot !== 'image2' && transientProviderFailure/)
-  assert.match(source, /generateImageWithSelectedProvider\(\{ \.\.\.body, imageSlot: 'image2' \}, user\)/)
+  assert.match(source, /error\.status === 429 \|\| error\.status === 502/)
+  assert.match(source, /return await generateImageWithSelectedProvider\(\{ \.\.\.body, imageSlot: 'image2' \}, user\)/)
+  assert.match(source, /已切换生图大模型2，但第二路也失败/)
+  assert.match(source, /imageSlot: config\.id/)
 })
 
 test('云端生图会校验真实图片类型而不是盲信浏览器 MIME', () => {
@@ -144,7 +147,7 @@ test('损坏的 UTF-8 标签回退到内置可读名称', () => {
 
 test('上游生图错误保留真实原因并映射网关状态', () => {
   assert.match(source, /图生图服务请求失败（上游 \$\{response\.status\}）/)
-  assert.match(source, /response\.status >= 500 \? 502 : 400/)
+  assert.match(source, /response\.status === 429 \? 429 : response\.status >= 500 \? 502 : 400/)
 })
 
 test('远程生成图通过带用户签名的 Edge Function 写入私有资产桶', () => {

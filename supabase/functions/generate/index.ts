@@ -873,7 +873,7 @@ async function requestGeminiImage(
   })
   const payload = await readProviderPayload(response)
   if (!response.ok) {
-    throw new HttpError(`Gemini 生图 API ${response.status}: ${providerErrorDetail(payload)}`, response.status >= 500 ? 502 : 400)
+    throw new HttpError(`Gemini 生图 API ${response.status}: ${providerErrorDetail(payload)}`, response.status === 429 ? 429 : response.status >= 500 ? 502 : 400)
   }
   return { response, payload }
 }
@@ -1203,6 +1203,7 @@ async function imageResult(
     createdAt: new Date().toISOString(),
     mode: 'managed-image-api',
     model: config.model,
+    imageSlot: config.id,
     originalImageUrl: originalImageUrl || undefined,
     images: [{
       id: 1,
@@ -1422,7 +1423,7 @@ async function generateImageWithSelectedProvider(body: Record<string, unknown>, 
     if (!response.ok) {
       throw new HttpError(
         `图生图服务请求失败（上游 ${response.status}）：${providerErrorDetail(payload)}`,
-        response.status >= 500 ? 502 : 400,
+        response.status === 429 ? 429 : response.status >= 500 ? 502 : 400,
       )
     }
     const data = Array.isArray(payload.data) ? payload.data as Record<string, unknown>[] : []
@@ -1446,7 +1447,7 @@ async function generateImage(body: Record<string, unknown>, user: { id: string }
   } catch (error) {
     const selectedSlot = normalizeImageSlot(body.imageSlot)
     const fallbackConfig = imageConfig('image2')
-    const transientProviderFailure = error instanceof HttpError && error.status === 502
+    const transientProviderFailure = error instanceof HttpError && (error.status === 429 || error.status === 502)
     const failoverDisabled = body.disableFailover === true
     if (!failoverDisabled && selectedSlot !== 'image2' && transientProviderFailure && isReady(fallbackConfig)) {
       console.warn(JSON.stringify({
@@ -1455,7 +1456,15 @@ async function generateImage(body: Record<string, unknown>, user: { id: string }
         to: 'image2',
         reason: error.message.slice(0, 300),
       }))
-      return generateImageWithSelectedProvider({ ...body, imageSlot: 'image2' }, user)
+      try {
+        return await generateImageWithSelectedProvider({ ...body, imageSlot: 'image2' }, user)
+      } catch (fallbackError) {
+        const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : '未知错误'
+        throw new HttpError(
+          `生图大模型1失败（${error.message}），已切换生图大模型2，但第二路也失败：${fallbackMessage}`,
+          fallbackError instanceof HttpError ? fallbackError.status : 502,
+        )
+      }
     }
     throw error
   }
