@@ -81,6 +81,12 @@ async function realImageCanary({ supabaseUrl, publishableKey, accessToken, selec
   const startedAt = Date.now()
   let actualSlot = selectedSlot
   try {
+    const requestedSize = process.env.ARCHFLOW_HEALTH_IMAGE_SIZE || '1024x1024'
+    if (!/^\d{2,4}x\d{2,4}$/.test(requestedSize)) throw new Error('invalid_health_image_size')
+    const [width, height] = requestedSize.split('x').map(Number)
+    if (width < 64 || height < 64 || width > 4096 || height > 4096) throw new Error('invalid_health_image_size')
+    const aspectRatio = width === height ? '1:1' : width * 9 === height * 16 ? '16:9' : undefined
+    const allowFailover = process.env.ARCHFLOW_HEALTH_ALLOW_FAILOVER === 'true'
     const attachment = {
       name: 'archflow-canary.png',
       mimeType: 'image/png',
@@ -93,9 +99,9 @@ async function realImageCanary({ supabaseUrl, publishableKey, accessToken, selec
       fileNames: [attachment.name],
       attachments: [attachment],
       imageSlot: selectedSlot,
-      imageSize: '1024x1024',
-      imageAspectRatio: '1:1',
-      disableFailover: true,
+      imageSize: requestedSize,
+      imageAspectRatio: aspectRatio,
+      disableFailover: !allowFailover,
     })
     actualSlot = String(result.imageSlot || selectedSlot)
     const deadline = Date.now() + CANARY_TIMEOUT_MS
@@ -110,8 +116,8 @@ async function realImageCanary({ supabaseUrl, publishableKey, accessToken, selec
         prompt: 'Architectural massing canary',
         fileNames: [attachment.name],
         imageSlot: actualSlot,
-        imageSize: '1024x1024',
-        imageAspectRatio: '1:1',
+        imageSize: requestedSize,
+        imageAspectRatio: aspectRatio,
         taskId: result.taskId,
         taskToken: result.taskToken,
       }, 90_000)
@@ -128,6 +134,7 @@ async function realImageCanary({ supabaseUrl, publishableKey, accessToken, selec
       selectedSlot,
       actualSlot,
       pollCount,
+      requestedSize,
     }
   } catch (error) {
     const detail = error instanceof Error ? error.message.slice(0, 300) : 'unknown_canary_error'
