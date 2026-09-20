@@ -178,7 +178,7 @@ export const builtInModels = Object.freeze({
   image: Object.freeze({
     label: '生图大模型',
     baseUrl: presetEnv.VITE_IMAGE_BASE_URL || 'https://api.openai.com/v1',
-    model: presetEnv.VITE_IMAGE_MODEL || 'gpt-image2.5',
+    model: presetEnv.VITE_IMAGE_MODEL || 'gpt-image-2.5-flare',
     size: presetEnv.VITE_IMAGE_SIZE || '4K',
   }),
 })
@@ -215,7 +215,7 @@ export const modelProviders = Object.freeze({
       label: '第三方生图服务',
       protocol: 'newapi-auto',
       baseUrl: 'https://img.yunfei.best',
-      model: 'gpt-image2.5',
+      model: 'gpt-image-2.5-flare',
       customBase: false,
       customModel: true,
     }),
@@ -367,7 +367,7 @@ function readStoredImageSlot(stored, slotNumber) {
   const connection = resolveModelConnection('image', {
     provider: stored[`${prefix}Provider`] || defaultProvider,
     baseUrl: stored[`${prefix}BaseUrl`],
-    model: stored[`${prefix}Model`],
+    model: slotNumber === 1 ? currentPrimaryImageModel(stored[`${prefix}Model`], stored[`${prefix}Provider`] || defaultProvider) : stored[`${prefix}Model`],
   })
   const verifiedValue = stored[`${prefix}Verified`]
   return {
@@ -377,6 +377,12 @@ function readStoredImageSlot(stored, slotNumber) {
     verified: stored.version ? Boolean(verifiedValue) : Boolean(apiKey),
     connection,
   }
+}
+
+export function currentPrimaryImageModel(model, provider = 'yunfei') {
+  return provider === 'yunfei' && ['gpt-image-2', 'gpt-image2.5'].includes(model)
+    ? modelProviders.image.yunfei.model
+    : model
 }
 
 export function getConfiguredImageModes() {

@@ -38,7 +38,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import { checkModelConnection, createAssetRecord, features, generateWithApi, getConfiguredImageModes, initialAssets, modelProviders, navItems, outputMeta, resolveModelConnection } from './data.js'
+import { checkModelConnection, createAssetRecord, currentPrimaryImageModel, features, generateWithApi, getConfiguredImageModes, initialAssets, modelProviders, navItems, outputMeta, resolveModelConnection } from './data.js'
 import {
   deletePersistentAsset,
   generateWithCloudApi,
@@ -1358,7 +1358,7 @@ function ImageApiSection({ slotNumber, slot, check, onChange, onProviderChange, 
         {providerConfig.customBase
           ? <label><span>Base URL</span><input value={slot.baseUrl} onChange={(event) => onChange({ baseUrl: event.target.value })} placeholder="https://provider.example/v1" /></label>
           : <div className="preset-connection"><span>内置地址</span><strong>{providerConfig.baseUrl}</strong></div>}
-        {providerConfig.customModel && <label className="full-field"><span>模型 ID</span><input value={slot.model} onChange={(event) => onChange({ model: event.target.value })} placeholder="例如 gpt-image2.5 或服务商提供的 Gemini 模型 ID" /></label>}
+        {providerConfig.customModel && <label className="full-field"><span>模型 ID</span><input value={slot.model} onChange={(event) => onChange({ model: event.target.value })} placeholder="例如 gpt-image-2.5-flare 或服务商提供的 Gemini 模型 ID" /></label>}
         <div className="api-key-field full-field">
           <label htmlFor={fieldId}>生图 API {slotNumber} Key</label>
           <div className="api-key-control"><input id={fieldId} type="password" value={slot.apiKey} onChange={(event) => onChange({ apiKey: event.target.value })} placeholder={`请输入生图 API ${slotNumber} Key`} autoComplete="off" /><button type="button" onClick={onApply} disabled={check.status === 'checking'}>{check.status === 'checking' ? <LoaderCircle className="spin" /> : <Link2 />} 应用 Key</button></div>
@@ -1385,7 +1385,7 @@ function ApiConfigDialog({ closeRef, onClose, onToast, onApiChanged }) {
     return {
       provider,
       baseUrl: isCurrentConfig ? initial[`${prefix}BaseUrl`] || preset.baseUrl : preset.baseUrl,
-      model: isCurrentConfig ? initial[`${prefix}Model`] || preset.model : preset.model,
+      model: isCurrentConfig ? (prefix === 'image' ? currentPrimaryImageModel(initial[`${prefix}Model`], provider) : initial[`${prefix}Model`]) || preset.model : preset.model,
       apiKey: initial[`${prefix}ApiKey`] || (prefix === 'image' ? initial.apiKey || '' : ''),
     }
   }
@@ -1395,7 +1395,7 @@ function ApiConfigDialog({ closeRef, onClose, onToast, onApiChanged }) {
     : { status: 'idle', message: '填写后点击“应用 Key”进行检查' })
   const [imageChecks, setImageChecks] = useState(() => [
     isCurrentConfig && initial.imageVerified
-      ? { status: 'success', message: `已连接 · ${initial.imageModel || modelProviders.image.yunfei.model}` }
+      ? { status: 'success', message: `已连接 · ${currentPrimaryImageModel(initial.imageModel, initial.imageProvider || 'yunfei') || modelProviders.image.yunfei.model}` }
       : { status: 'idle', message: '填写后点击“应用 Key”进行检查' },
     isCurrentConfig && initial.image2Verified
       ? { status: 'success', message: `已连接 · ${initial.image2Model}` }
