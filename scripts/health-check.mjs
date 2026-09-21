@@ -8,6 +8,8 @@ const DEFAULT_TIMEOUT_MS = 12_000
 const CANARY_TIMEOUT_MS = 8 * 60_000
 const CANARY_PNG_BASE64 = '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'
 
+const CANARY_JPEG_BASE64 = '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAoHBwkHBgoJCAkLCwoMDxkQDw4ODx4WFxIZJCAmJSMgIyIoLTkwKCo2KyIjMkQyNjs9QEBAJjBGS0U+Sjk/QD3/2wBDAQsLCw8NDx0QEB09KSMpPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT3/wAARCAEAAQADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD1qiiimIKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooA//2Q=='
+
 function normalizedBaseUrl(value) {
   return String(value || '').trim().replace(/\/+$/, '')
 }
@@ -77,20 +79,27 @@ async function invokeGenerate(supabaseUrl, publishableKey, accessToken, body, ti
   return payload
 }
 
+function requestedCanarySize(value) {
+  const raw = String(value || '1024x1024').trim()
+  const aliases = { '1K': '1024x1024', '2K': '2048x2048', '4K': '3840x2160' }
+  const requestedSize = aliases[raw.toUpperCase()] || raw
+  if (!/^\d{2,4}x\d{2,4}$/.test(requestedSize)) throw new Error('invalid_health_image_size')
+  const [width, height] = requestedSize.split('x').map(Number)
+  if (width < 64 || height < 64 || width > 4096 || height > 4096) throw new Error('invalid_health_image_size')
+  return { requestedSize, width, height }
+}
+
 async function realImageCanary({ supabaseUrl, publishableKey, accessToken, selectedSlot, recentUserSuccesses = {} }) {
   const startedAt = Date.now()
   let actualSlot = selectedSlot
   try {
-    const requestedSize = process.env.ARCHFLOW_HEALTH_IMAGE_SIZE || '1024x1024'
-    if (!/^\d{2,4}x\d{2,4}$/.test(requestedSize)) throw new Error('invalid_health_image_size')
-    const [width, height] = requestedSize.split('x').map(Number)
-    if (width < 64 || height < 64 || width > 4096 || height > 4096) throw new Error('invalid_health_image_size')
+    const { requestedSize, width, height } = requestedCanarySize(process.env.ARCHFLOW_HEALTH_IMAGE_SIZE)
     const aspectRatio = width === height ? '1:1' : width * 9 === height * 16 ? '16:9' : undefined
     const allowFailover = process.env.ARCHFLOW_HEALTH_ALLOW_FAILOVER === 'true'
     const attachment = {
-      name: 'archflow-canary.png',
-      mimeType: 'image/png',
-      data: CANARY_PNG_BASE64,
+      name: 'archflow-canary.jpg',
+      mimeType: 'image/jpeg',
+      data: CANARY_JPEG_BASE64,
     }
     let result = await invokeGenerate(supabaseUrl, publishableKey, accessToken, {
       action: 'generate',
