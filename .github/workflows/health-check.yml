@@ -6,7 +6,7 @@ on:
       image_slots:
         description: Comma-separated image slots to verify
         required: false
-        default: image1,image2
+        default: image1,image2,image3
       image_size:
         description: Output size for a one-off diagnostic (routine checks use 1024x1024)
         required: false
@@ -45,7 +45,7 @@ jobs:
           ARCHFLOW_MONITOR_EMAIL: ${{ secrets.ARCHFLOW_MONITOR_EMAIL }}
           ARCHFLOW_MONITOR_PASSWORD: ${{ secrets.ARCHFLOW_MONITOR_PASSWORD }}
           ARCHFLOW_HEALTH_TIMEOUT_MS: 60000
-          ARCHFLOW_HEALTH_IMAGE_SLOTS: ${{ inputs.image_slots || 'image1,image2' }}
+          ARCHFLOW_HEALTH_IMAGE_SLOTS: ${{ inputs.image_slots || 'image1,image2,image3' }}
           ARCHFLOW_HEALTH_IMAGE_SIZE: ${{ inputs.image_size || '1024x1024' }}
           ARCHFLOW_HEALTH_ALLOW_FAILOVER: ${{ inputs.allow_failover || false }}
         run: |
