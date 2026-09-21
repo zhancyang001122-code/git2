@@ -13,11 +13,11 @@ function normalizedBaseUrl(value) {
 }
 
 function requestedCanarySlots(value) {
-  const slots = String(value || 'image1,image2')
+  const slots = String(value || 'image1,image2,image3')
     .split(',')
     .map((slot) => slot.trim())
     .filter((slot) => /^image[1-9]\d*$/.test(slot))
-  return slots.length ? [...new Set(slots)] : ['image1', 'image2']
+  return slots.length ? [...new Set(slots)] : ['image1', 'image2', 'image3']
 }
 
 async function fetchCheck(name, url, options = {}, validate = async () => undefined) {
@@ -212,7 +212,22 @@ async function main() {
         }
         if (payload.ok !== true) throw new Error('operational_health_failed')
       }))
+      const configuredImageSlots = new Set(
+        (Array.isArray(operationalPayload.imageModes) ? operationalPayload.imageModes : [])
+          .filter((mode) => mode?.configured === true)
+          .map((mode) => String(mode.id || '')),
+      )
       for (const selectedSlot of requestedCanarySlots(process.env.ARCHFLOW_HEALTH_IMAGE_SLOTS)) {
+        if (!configuredImageSlots.has(selectedSlot)) {
+          checks.push({
+            name: `real_image_${selectedSlot}`,
+            status: 'skip',
+            latencyMs: 0,
+            selectedSlot,
+            detail: 'image_provider_not_configured',
+          })
+          continue
+        }
         checks.push(await realImageCanary({
           supabaseUrl,
           publishableKey,
