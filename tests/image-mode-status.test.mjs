@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { imageModeConnection, imageModeOptionLabel, isImageModeSelectable } from '../src/lib/image-mode-status.js'
+import { configuredImageModeCount, imageModeConnection, imageModeOptionLabel, isImageModeSelectable } from '../src/lib/image-mode-status.js'
 
 test('已连接模型显示连接状态', () => {
   const mode = { label: 'API 1', model: 'image-1', maxSize: '4K', connected: true, connectionStatus: 'connected' }
@@ -24,4 +24,12 @@ test('配置不完整的自动发现槽位不可选择', () => {
   const mode = { configured: false, connectionStatus: 'not_configured' }
   assert.equal(imageModeConnection(mode).label, '配置不完整')
   assert.equal(isImageModeSelectable(mode), false)
+})
+
+test('服务端模型计数不把配置不完整的占位槽算作已注册模型', () => {
+  assert.equal(configuredImageModeCount([
+    { id: 'image1', configured: true },
+    { id: 'image2', configured: true },
+    { id: 'image3', configured: false },
+  ]), 2)
 })

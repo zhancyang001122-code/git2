@@ -57,7 +57,7 @@ import {
   updateMemo,
 } from './lib/supabase.js'
 import { formatElapsedTime } from './lib/time.js'
-import { imageModeConnection, imageModeOptionLabel, isImageModeSelectable } from './lib/image-mode-status.js'
+import { configuredImageModeCount, imageModeConnection, imageModeOptionLabel, isImageModeSelectable } from './lib/image-mode-status.js'
 import { originalImageOutputSize } from './lib/image-output-size.js'
 import { isInvalidSessionError } from './lib/session.js'
 import { loadWorkspaceAndCapabilities } from './lib/workspace-loader.js'
@@ -129,6 +129,7 @@ export default function App() {
   const currentUserName = session?.user?.user_metadata?.display_name
     || session?.user?.user_metadata?.username
     || (session ? internalAccountUsername : '方案一组')
+  const managedImageCount = configuredImageModeCount(managedModels.imageModes)
 
   useEffect(() => {
     const onHashChange = () => setRoute(getInitialRoute())
@@ -291,8 +292,8 @@ export default function App() {
         onClose={() => setMobileNavOpen(false)}
         onApiConfig={() => setDialog({ type: 'api-config' })}
         onProfile={() => setDialog({ type: 'profile' })}
-        apiEnabled={session ? managedModels.languageReady && managedModels.imageModes.length > 0 : apiEnabled}
-        apiKeyCount={session ? (managedModels.languageReady ? 1 : 0) + managedModels.imageModes.length : apiEnabled ? 1 + imageModes.length : 0}
+        apiEnabled={session ? managedModels.languageReady && managedImageCount > 0 : apiEnabled}
+        apiKeyCount={session ? (managedModels.languageReady ? 1 : 0) + managedImageCount : apiEnabled ? 1 + imageModes.length : 0}
         session={session}
         userName={currentUserName}
         syncState={syncState}
@@ -1326,7 +1327,7 @@ function ProfileDialog({ closeRef, onClose, onToast, session, authReady, syncSta
 }
 
 function ManagedApiDialog({ closeRef, onClose, managedModels }) {
-  const modelCount = (managedModels.languageReady ? 1 : 0) + managedModels.imageModes.length
+  const modelCount = (managedModels.languageReady ? 1 : 0) + configuredImageModeCount(managedModels.imageModes)
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="dialog-card profile-dialog managed-api-dialog" role="dialog" aria-modal="true" aria-labelledby="managed-api-title">

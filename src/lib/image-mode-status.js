@@ -24,3 +24,7 @@ export function imageModeOptionLabel(mode = {}) {
 export function isImageModeSelectable(mode = {}) {
   return mode.configured !== false && mode.connectionReason !== 'model_missing' && mode.connectionStatus !== 'error'
 }
+
+export function configuredImageModeCount(modes = []) {
+  return modes.filter((mode) => mode?.configured !== false).length
+}
