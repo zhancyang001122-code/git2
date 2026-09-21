@@ -58,7 +58,7 @@ pnpm build
 
 ### 内部账号生图 API 自动注册
 
-`内部账户1` 的模型密钥由 Supabase Edge Function 托管，不需要也不应填写到访客的“API Key 配置”中。Edge Function 会自动发现 `ARCHFLOW_IMAGE_N_*` 槽位；新增第 3、4 路 API 时只需把下面的 `2` 改成对应编号，无需再改前端或后端代码：
+`内部账户1` 的模型密钥由 Supabase Edge Function 托管，不需要也不应填写到访客的“API Key 配置”中。Edge Function 会自动发现 `ARCHFLOW_IMAGE_N_*` 槽位；第 3 路已预注册为 `GPT Image 2`（模型 `gpt-image-2`、OpenAI 兼容协议、4K），在供应商地址和 Key 配置前会显示“配置不完整”。新增第 4 路及以后只需把下面的 `2` 改成对应编号，无需再改前端或后端代码：
 
 ```text
 ARCHFLOW_IMAGE_2_LABEL=Git2 图 Gemini

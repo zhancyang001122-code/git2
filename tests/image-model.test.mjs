@@ -9,6 +9,7 @@ test('first image API migrates only the retired built-in model override', () => 
   assert.equal(resolveImageModel(1, '', 'gpt-image-2.5-flare'), 'gpt-image-2.5-flare')
   assert.equal(resolveImageModel(1, 'custom-image-v3', 'gpt-image-2.5-flare'), 'custom-image-v3')
   assert.equal(resolveImageModel(2, 'gpt-image-2', 'gemini-3-pro-image-preview'), 'gpt-image-2')
+  assert.equal(resolveImageModel(3, 'gpt-image-2', 'gpt-image-2'), 'gpt-image-2')
 })
 
 test('guest image API 1 upgrades stored Yunfei defaults without changing a custom model', () => {
