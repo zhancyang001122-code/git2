@@ -147,6 +147,20 @@ test('按 ARCHFLOW_IMAGE_N_* 自动发现后续生图 API', () => {
   assert.match(source, /normalizeImageSlot\(body\.imageSlot\)/)
 })
 
+test('第三路 GPT Image 2 作为 4K 通道预注册并复用可预览的后台持久化链路', () => {
+  assert.match(source, /if \(slotNumber === 3\)[\s\S]*?label: 'GPT Image 2'/)
+  assert.match(source, /if \(slotNumber === 3\)[\s\S]*?model: 'gpt-image-2'/)
+  assert.match(source, /if \(slotNumber === 3\)[\s\S]*?protocol: 'openai'/)
+  assert.match(source, /if \(slotNumber === 3\)[\s\S]*?responseMode: 'url'/)
+  assert.match(source, /if \(slotNumber === 3\)[\s\S]*?size: '4K'/)
+  assert.match(source, /new Set<number>\(\[1, 2, 3\]\)/)
+  assert.match(source, /EdgeRuntime\.waitUntil\(runManagedOpenAIImageTask\(/)
+  assert.match(source, /durableImageUrl = await storeManagedImageOutput\(taskId, userId, item\.url, taskDeadline\)/)
+  assert.match(source, /durableImageUrl = await storeManagedImageBytes\(taskId, userId, decoded\.bytes/)
+  assert.match(source, /生图大模型\$\{imageSlotNumber\(selectedSlot\)\}失败/)
+  assert.match(source, /主选生图通道失败/)
+})
+
 test('连接检测只报告状态，不再隐藏检测异常的模型', () => {
   assert.match(source, /connectionStatus: connection\.status/)
   assert.match(source, /connectionMessage: imageConnectionMessage\(connection\)/)

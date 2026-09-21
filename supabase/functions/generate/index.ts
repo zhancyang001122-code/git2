@@ -312,6 +312,17 @@ function legacyImageDefaults(slotNumber: number) {
       size: '4K',
     }
   }
+  if (slotNumber === 3) {
+    return {
+      label: 'GPT Image 2',
+      baseUrl: '',
+      model: 'gpt-image-2',
+      apiKey: '',
+      protocol: 'openai',
+      responseMode: 'url',
+      size: '4K',
+    }
+  }
   return {
     label: `内置生图 API ${slotNumber}`,
     baseUrl: '',
@@ -342,7 +353,7 @@ function imageConfig(slot: string): ImageConfig {
 }
 
 function imageConfigs() {
-  const declaredSlots = new Set<number>([1, 2])
+  const declaredSlots = new Set<number>([1, 2, 3])
   for (const name of Object.keys(Deno.env.toObject())) {
     const match = /^ARCHFLOW_IMAGE_([1-9]\d*)_(?:LABEL|BASE_URL|MODEL|API_KEY|API_KEY_SECRET|PROTOCOL|RESPONSE_MODE|SIZE|QUALITY)$/.exec(name)
     if (match) declaredSlots.add(Number(match[1]))
@@ -1095,7 +1106,9 @@ async function runManagedGeminiTask(
     }
   }
   const secondFailure = finalError instanceof Error ? finalError.message : 'Gemini 后台生图失败。'
-  const message = initialFailure ? `第一路失败（${initialFailure.slice(0, 300)}）；第二路失败（${secondFailure}）` : secondFailure
+  const message = initialFailure
+    ? `主选生图通道失败（${initialFailure.slice(0, 300)}）；故障转移生图大模型2失败（${secondFailure}）`
+    : secondFailure
   await updateManagedImageTask(taskId, { status: 'failed', error_message: message.slice(0, 1000), image_url: null })
   console.error(JSON.stringify({ event: 'managed_image_task_failed', taskId, message: message.slice(0, 500) }))
 }
@@ -1159,7 +1172,7 @@ async function runManagedOpenAIImageTask(
     }
     console.info(JSON.stringify({ event: 'managed_openai_image_task_completed', taskId, imageSlot: config.id }))
   } catch (error) {
-    const message = error instanceof Error ? error.message : '第一路后台生图失败。'
+    const message = error instanceof Error ? error.message : `${config.label} 后台生图失败。`
     const fallbackConfig = imageConfig('image2')
     const transientFailure = error instanceof HttpError && (error.status === 429 || error.status === 502)
     if (allowFailover && !providerCompleted && config.id !== 'image2' && transientFailure && isReady(fallbackConfig)) {
@@ -1504,7 +1517,7 @@ async function generateImage(body: Record<string, unknown>, user: { id: string }
       } catch (fallbackError) {
         const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : '未知错误'
         throw new HttpError(
-          `生图大模型1失败（${error.message}），已切换生图大模型2，但第二路也失败：${fallbackMessage}`,
+          `生图大模型${imageSlotNumber(selectedSlot)}失败（${error.message}），已切换生图大模型2，但第二路也失败：${fallbackMessage}`,
           fallbackError instanceof HttpError ? fallbackError.status : 502,
         )
       }

@@ -38,6 +38,21 @@ ARCHFLOW_IMAGE_2_RESPONSE_MODE=url
 ARCHFLOW_IMAGE_2_SIZE=4K
 ```
 
+第三路已预注册为 `GPT Image 2`、模型 `gpt-image-2`、OpenAI 兼容协议和 `4K` 档位。供应商信息到位后只需安全配置以下 Secrets，无需把 Key 写入源码：
+
+```text
+ARCHFLOW_IMAGE_3_LABEL=GPT Image 2
+ARCHFLOW_IMAGE_3_BASE_URL=<供应商 Base URL>
+ARCHFLOW_IMAGE_3_MODEL=gpt-image-2
+ARCHFLOW_IMAGE_3_API_KEY=<供应商 API Key>
+ARCHFLOW_IMAGE_3_PROTOCOL=openai
+ARCHFLOW_IMAGE_3_RESPONSE_MODE=url
+ARCHFLOW_IMAGE_3_SIZE=4K
+ARCHFLOW_IMAGE_3_QUALITY=high
+```
+
+配置完成前，第三路会保留在内部账号模型列表并显示“配置不完整”，不会被选中或影响前两路。第三路复用现有 4K 后台任务、图片内容验真、私有 Storage 持久化和签名 URL 预览链路；生产验收必须在网页选择模型 3，实际点击“生成专业结果”，并确认横向对比区能加载生成图。
+
 当前第二路 NewAPI 配置为 `https://img.yunfei.best`、模型 `gemini-3-pro-image-preview`、协议 `gemini`。`git2图gemini` 是存放 API Key 的 Secret 名称，不是模型名；可以直接使用 `ARCHFLOW_IMAGE_2_API_KEY`，也可以设置 `ARCHFLOW_IMAGE_2_API_KEY_SECRET=git2图gemini`，让槽位引用现有的自定义 Secret。第二路使用 `ARCHFLOW_IMAGE_2_RESPONSE_MODE=url`，让服务商返回临时图片 URL，避免 4K base64 图片挤占 Edge Function 的响应内存。Edge Function 会自动发现所有 `ARCHFLOW_IMAGE_N_*` 槽位，后续新增 API 不需要再修改代码。
 
 `url` 模式会先创建 `image_generation_tasks` 后台任务并立即响应，实际 4K 调用通过 `EdgeRuntime.waitUntil` 继续执行，前端每 2 秒查询任务状态。这样浏览器请求不会一直占用同步连接；任务表只允许服务端角色访问，不保存输入图或 API Key，完成后只短期记录服务商图片 URL与任务状态。
