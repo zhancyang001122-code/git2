@@ -547,6 +547,7 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
   const activeRef = useRef(active)
   const scrollOnReveal = useRef(false)
   const usesImageModel = ['beautify', 'render'].includes(feature.id)
+  const promptMaxLength = feature.id === 'render' ? 1600 : 800
   const renderImageModes = imageModes.length ? imageModes : [{ id: 'demo', label: '本地演示', model: '未连接 API', maxSize: '4K', supportsCustomSize: true, connected: false, connectionStatus: 'warning' }]
   const activeImageMode = renderImageModes.find((mode) => mode.id === imageMode) || renderImageModes[0]
   const availableImageFrameOptions = imageFrameOptions.filter((frame) => !frame.requiresOriginalRatio || activeImageMode?.supportsOriginalRatio !== false)
@@ -755,9 +756,9 @@ function FeatureWorkspace({ feature, active, onNavigate, onSave, onDialog, onToa
               onChange={(event) => setPrompt(event.target.value)}
               placeholder={feature.placeholder}
               rows="6"
-              maxLength="800"
+              maxLength={promptMaxLength}
             />
-            <span className="char-count">{prompt.length} / 800</span>
+            <span className="char-count">{prompt.length} / {promptMaxLength}</span>
             <div className="prompt-drop-overlay" aria-hidden={!dragActive}><UploadCloud /><strong>松开即可上传到项目描述</strong><small>图片会显示预览，文件数量同步更新</small></div>
           </div>
           <div className="quick-row">
