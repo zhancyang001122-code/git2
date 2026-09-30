@@ -44,6 +44,7 @@ import {
   generateWithCloudApi,
   getCloudCapabilities,
   getCurrentSession,
+  getAssetOriginalBlob,
   insertMemo,
   internalAccountUsername,
   isSupabaseConfigured,
@@ -61,6 +62,8 @@ import { configuredImageModeCount, imageModeConnection, imageModeOptionLabel, is
 import { originalImageOutputSize } from './lib/image-output-size.js'
 import { isInvalidSessionError } from './lib/session.js'
 import { loadWorkspaceAndCapabilities } from './lib/workspace-loader.js'
+import { assetListPreviews, assetPage, assetSessionScope } from './lib/asset-access.js'
+import { AssetImage } from './components/AssetImage.jsx'
 
 const validRoutes = new Set(navItems.map((item) => item.id))
 const sidebarNavItems = navItems.filter((item) => item.id !== 'home')
@@ -105,12 +108,30 @@ function downloadGeneratedAsset(url, name) {
   link.remove()
 }
 
+async function downloadStoredArtifact(artifact, onToast) {
+  if (!artifact.storagePath) return downloadGeneratedAsset(artifact.imageUrl, artifact.name)
+  try {
+    const blob = await getAssetOriginalBlob(artifact)
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = artifact.name || 'ArchFlow-original'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch (error) {
+    onToast({ title: '原图下载失败', detail: error instanceof Error ? error.message : '请稍后重试。' })
+  }
+}
+
 export default function App() {
   const [route, setRoute] = useState(getInitialRoute)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [assets, setAssets] = useState(initialAssets)
   const [memos, setMemos] = useState(demoMemos)
   const [session, setSession] = useState(null)
+  const sessionScope = assetSessionScope(session)
   const [authReady, setAuthReady] = useState(!isSupabaseConfigured)
   const [syncState, setSyncState] = useState('guest')
   const [managedModels, setManagedModels] = useState({ languageReady: false, languageModel: '', imageModes: [] })
@@ -157,6 +178,7 @@ export default function App() {
 
   useEffect(() => {
     let active = true
+    setDialog(null)
     if (!session) {
       setAssets(initialAssets)
       setMemos(demoMemos)
@@ -166,6 +188,8 @@ export default function App() {
       return () => { active = false }
     }
 
+    setAssets([])
+    setMemos([])
     setSyncState('loading')
     loadWorkspaceAndCapabilities(loadInternalWorkspace, getCloudCapabilities)
       .then(({ workspace, capabilities, capabilitiesError }) => {
@@ -201,7 +225,7 @@ export default function App() {
         setToast({ title: '云端工作区加载失败', detail: error instanceof Error ? error.message : '请稍后重新登录。' })
       })
     return () => { active = false }
-  }, [session])
+  }, [sessionScope])
 
   useEffect(() => {
     if (!toast) return undefined
@@ -1082,18 +1106,19 @@ function ReportOutput({ onToast }) {
   )
 }
 
-function AssetPreviewVisual({ asset }) {
-  const previews = (asset.artifacts || []).filter((item) => item.imageUrl).slice(0, 3)
-  if (!previews.length) return <span className="asset-folder" aria-hidden="true"><i/><i/><i/></span>
+export function AssetPreviewVisual({ asset }) {
+  const previews = assetListPreviews(asset.artifacts)
+  if (!previews.length) return <><span className="asset-folder" aria-hidden="true"><i/><i/><i/></span>{asset.artifacts?.some((item) => item.storagePath) && <span className="asset-original-hint">点击查看原图</span>}</>
   return (
     <span className={`asset-thumbnail-stack is-${previews.length}`} aria-hidden="true">
-      {previews.map((item) => <img src={item.imageUrl} alt="" decoding="async" draggable="false" key={item.id} />)}
+      {previews.map((item) => <AssetImage artifact={item} key={item.thumbnailPath || item.id} />)}
     </span>
   )
 }
 
-function AssetsView({ assets, onDialog, onNavigate }) {
+export function AssetsView({ assets, onDialog, onNavigate }) {
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(0)
   const [filter, setFilter] = useState('全部')
   const deferredSearch = useDeferredValue(search)
   const types = ['全部', ...new Set(assets.map((asset) => asset.type))]
@@ -1101,6 +1126,8 @@ function AssetsView({ assets, onDialog, onNavigate }) {
     const matchesSearch = `${asset.title}${asset.type}${asset.source}`.toLowerCase().includes(deferredSearch.toLowerCase())
     return matchesSearch && (filter === '全部' || asset.type === filter)
   }), [assets, deferredSearch, filter])
+  useEffect(() => setPage(0), [deferredSearch, filter])
+  const pagination = assetPage(filtered, page)
 
   return (
     <div className="assets-view enter-view">
@@ -1117,7 +1144,7 @@ function AssetsView({ assets, onDialog, onNavigate }) {
       </section>
       {filtered.length ? (
         <div className="asset-grid">
-          {filtered.map((asset) => (
+          {pagination.items.map((asset) => (
             <article className="asset-card" key={asset.id}>
               <button className={`asset-preview tone-${asset.tone} ${asset.artifacts?.length ? 'has-generated-preview' : ''}`} onClick={() => onDialog({ type: 'asset', asset })} aria-label={`查看${asset.title}详情`}><AssetPreviewVisual asset={asset} /><span className="asset-type">{asset.type}</span><span className="asset-count">{asset.files}<small>FILES</small></span></button>
               <div className="asset-body"><div><small>{asset.source}</small><h2>{asset.title}</h2></div><div className="asset-meta"><span>{asset.time}</span><span>{asset.persistent ? 'Cloud Asset' : asset.sessionOnly ? 'Session Asset' : 'Local POC'}</span></div><div className="asset-actions"><button className="button button-quiet" onClick={() => onDialog({ type: 'asset', asset })}>查看详情 <Eye /></button><button className="icon-button delete-icon" onClick={() => onDialog({ type: 'delete', asset })} aria-label={`删除${asset.title}`}><Trash2 /></button></div></div>
@@ -1127,6 +1154,11 @@ function AssetsView({ assets, onDialog, onNavigate }) {
       ) : (
         <div className="empty-state"><span><Search /></span><h2>没有找到匹配资产</h2><p>试试调整关键词或筛选条件。</p><button className="button button-secondary" onClick={() => { setSearch(''); setFilter('全部') }}>清除筛选</button></div>
       )}
+      {pagination.pageCount > 1 && <nav className="asset-pagination" aria-label="资产分页">
+        <button className="button button-secondary" disabled={pagination.page === 0} onClick={() => setPage(pagination.page - 1)}>上一页</button>
+        <span>{pagination.page + 1} / {pagination.pageCount}</span>
+        <button className="button button-secondary" disabled={pagination.page + 1 === pagination.pageCount} onClick={() => setPage(pagination.page + 1)}>下一页</button>
+      </nav>}
     </div>
   )
 }
@@ -1194,14 +1226,14 @@ function Dialog({ data, onClose, onDelete, onToast, onApiChanged, session, authR
   }
 
   const asset = data.asset
-  const generatedArtifacts = (asset.artifacts || []).filter((item) => item.imageUrl).slice(0, 3)
+  const generatedArtifacts = (asset.artifacts || []).filter((item) => item.storagePath || item.imageUrl).slice(0, 3)
   const generatedArtifact = generatedArtifacts[0]
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="dialog-card asset-dialog" role="dialog" aria-modal="true" aria-labelledby="asset-title">
         <button ref={closeRef} className="icon-button dialog-close" onClick={onClose} aria-label="关闭"><X /></button>
-        <div className={`dialog-asset-preview tone-${asset.tone} ${generatedArtifact ? 'has-generated-asset' : ''}`}>{generatedArtifact ? <img src={generatedArtifact.imageUrl} alt={generatedArtifact.title} decoding="async" draggable="false" /> : <><span className="asset-folder"><i/><i/><i/></span><FileArchive /></>} {generatedArtifact && <span className="session-preview-badge"><Check /> {asset.persistent ? '内部账户云端资产' : '当前会话真实生成'}</span>}</div>
-        <div className="dialog-asset-copy"><span className="eyebrow">ASSET PACKAGE</span><h2 id="asset-title">{asset.title}</h2><p>由 {asset.source} 生成，包含可继续编辑的项目成果和过程记录。{asset.resultData && ' 本次真实生成内容已随资产保留。'}</p><dl><div><dt>资产类型</dt><dd>{asset.type}</dd></div><div><dt>文件数量</dt><dd>{asset.files} 个</dd></div><div><dt>更新时间</dt><dd>{asset.time}</dd></div></dl>{generatedArtifact && <div className="session-asset-file"><span><ImagePlus /></span><p><strong>{generatedArtifact.title}</strong><small>{generatedArtifact.meta} · {asset.persistent ? '私有云存储，可跨设备下载' : '当前标签页内存，刷新后清除'}</small></p><button className="icon-button" onClick={() => downloadGeneratedAsset(generatedArtifact.imageUrl, generatedArtifact.name)} aria-label={`下载${generatedArtifact.title}`}><Download /></button></div>}<div className="dialog-actions"><button className="button button-secondary" onClick={() => generatedArtifact ? downloadGeneratedAsset(generatedArtifact.imageUrl, generatedArtifact.name) : asset.resultData ? downloadDemo(`${asset.title}-成果.json`, JSON.stringify(asset.resultData, null, 2)) : downloadDemo(`${asset.title}.zip`)}>{generatedArtifact ? '下载生成图' : asset.resultData ? '下载成果数据' : '下载资产'} <Download /></button><button className="button button-primary" onClick={onClose}>完成 <Check /></button></div></div>
+        <div className={`dialog-asset-preview tone-${asset.tone} ${generatedArtifact ? 'has-generated-asset' : ''}`}>{generatedArtifact ? <AssetImage key={generatedArtifact.storagePath || generatedArtifact.id} artifact={generatedArtifact} purpose="original" alt={generatedArtifact.title} /> : <><span className="asset-folder"><i/><i/><i/></span><FileArchive /></>} {generatedArtifact && <span className="session-preview-badge"><Check /> {asset.persistent ? '内部账户云端资产' : '当前会话真实生成'}</span>}</div>
+        <div className="dialog-asset-copy"><span className="eyebrow">ASSET PACKAGE</span><h2 id="asset-title">{asset.title}</h2><p>由 {asset.source} 生成，包含可继续编辑的项目成果和过程记录。{asset.resultData && ' 本次真实生成内容已随资产保留。'}</p><dl><div><dt>资产类型</dt><dd>{asset.type}</dd></div><div><dt>文件数量</dt><dd>{asset.files} 个</dd></div><div><dt>更新时间</dt><dd>{asset.time}</dd></div></dl>{generatedArtifact && <div className="session-asset-file"><span><ImagePlus /></span><p><strong>{generatedArtifact.title}</strong><small>{generatedArtifact.meta} · {asset.persistent ? '私有云存储，可跨设备下载' : '当前标签页内存，刷新后清除'}</small></p><button className="icon-button" onClick={() => downloadStoredArtifact(generatedArtifact, onToast)} aria-label={`下载${generatedArtifact.title}`}><Download /></button></div>}<div className="dialog-actions"><button className="button button-secondary" onClick={() => generatedArtifact ? downloadStoredArtifact(generatedArtifact, onToast) : asset.resultData ? downloadDemo(`${asset.title}-成果.json`, JSON.stringify(asset.resultData, null, 2)) : downloadDemo(`${asset.title}.zip`)}>{generatedArtifact ? '下载生成图' : asset.resultData ? '下载成果数据' : '下载资产'} <Download /></button><button className="button button-primary" onClick={onClose}>完成 <Check /></button></div></div>
       </section>
     </div>
   )

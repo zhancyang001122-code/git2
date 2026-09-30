@@ -12,5 +12,5 @@ export async function storeAssetArtifact({ artifact, packageId, baseName }, adap
   const storedName = adapters.storedImageName(baseName, blob.type)
   const storagePath = `${adapters.userId}/${packageId}/${storedName}`
   await adapters.uploadBlob(storagePath, blob)
-  return { fileName: storedName, storagePath }
+  return { fileName: storedName, storagePath, sourceBlob }
 }

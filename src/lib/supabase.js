@@ -3,6 +3,9 @@ import { prepareImageForStorage, storedImageName } from './asset-image.js'
 import { storeAssetArtifact } from './asset-persistence.js'
 import { waitForImageTask } from './async-image-task.js'
 import { clearInvalidBrowserSession, validatedBrowserSession } from './session.js'
+import { assetImagePath, assetSessionScope, createAssetUrlCache, listedArtifacts } from './asset-access.js'
+import { prepareAssetThumbnail, storeAssetThumbnail } from './asset-thumbnail.js'
+import { createAssetOriginalReader } from './asset-download.js'
 
 // These values are public browser configuration, not server secrets. Keeping a
 // checked-in fallback prevents a missing Vercel/GitHub build variable from
@@ -77,16 +80,66 @@ function mapMemo(row) {
   }
 }
 
-async function signedArtifact(artifact) {
-  if (!artifact?.storagePath) return artifact
-  const client = requireClient()
-  const { data, error } = await client.storage.from('user-assets').createSignedUrl(artifact.storagePath, 60 * 60)
-  if (error) throw error
-  return { ...artifact, imageUrl: data.signedUrl }
+const assetUrls = createAssetUrlCache({
+  sign: async (path, ttl, download) => {
+    const { data, error } = await requireClient().storage.from('user-assets').createSignedUrl(path, ttl, { download })
+    if (error) throw error
+    return data.signedUrl
+  },
+})
+let assetAccessRevision = 0
+let activeAssetScope = ''
+const assetOriginals = createAssetOriginalReader({ getUrl: getAssetImageUrl })
+
+function resetAssetAccess() {
+  assetAccessRevision += 1
+  activeAssetScope = ''
+  assetUrls.clear()
+  assetOriginals.clear()
 }
 
-async function mapAsset(row) {
-  const artifacts = await Promise.all((row.artifacts || []).slice(0, 3).map(signedArtifact))
+function setAssetSession(session) {
+  const scope = assetSessionScope(session)
+  if (scope !== activeAssetScope) {
+    assetAccessRevision += 1
+    assetOriginals.clear()
+  }
+  activeAssetScope = scope
+  assetUrls.setScope(scope)
+}
+
+// Also invalidate when another tab logs out. No URL/token is persisted.
+supabase?.auth.onAuthStateChange((event, session) => {
+  if (event === 'SIGNED_OUT') resetAssetAccess()
+  else setAssetSession(session)
+})
+
+export async function getAssetImageUrl(artifact, { purpose = 'thumbnail', forceRefresh = false, download = false } = {}) {
+  const path = assetImagePath(artifact, purpose)
+  if (!path) return artifact?.storagePath ? '' : (artifact?.imageUrl || '')
+  const startedRevision = assetAccessRevision
+  const { data, error } = await requireClient().auth.getSession()
+  if (error) throw error
+  // A concurrent read can initialize the same session while getSession awaits.
+  // Reject stale reads after logout or a switch to a different session.
+  if (startedRevision !== assetAccessRevision && assetSessionScope(data.session) !== activeAssetScope) {
+    throw new Error('登录会话已变更，请重新打开图片。')
+  }
+  setAssetSession(data.session)
+  return assetUrls.get(path, { forceRefresh, download })
+}
+
+export async function getAssetOriginalBlob(artifact) {
+  // Resolve the initial session before recording the revision.
+  await getAssetImageUrl(artifact, { purpose: 'original' })
+  const revision = assetAccessRevision
+  const blob = await assetOriginals.read(artifact)
+  if (revision !== assetAccessRevision) throw new Error('登录会话已变更，下载已取消。')
+  return blob
+}
+
+function mapAsset(row) {
+  const artifacts = listedArtifacts(row.artifacts || [])
   return {
     id: row.id,
     title: row.title,
@@ -123,6 +176,7 @@ export function subscribeToAuth(callback) {
 
 export async function recoverInvalidSession() {
   if (!supabase) return
+  resetAssetAccess()
   await clearInvalidBrowserSession(supabase.auth)
 }
 
@@ -130,6 +184,7 @@ export async function signInInternalAccount(username, password) {
   const normalizedUsername = username.trim()
   if (normalizedUsername !== internalAccountUsername) throw new Error('账号或密码不正确。')
   const client = requireClient()
+  resetAssetAccess()
   const { data, error } = await client.auth.signInWithPassword({
     email: internalAccountEmail,
     password,
@@ -141,6 +196,7 @@ export async function signInInternalAccount(username, password) {
 
 export async function signOutInternalAccount() {
   const client = requireClient()
+  resetAssetAccess()
   // Multiple interviewers may use the shared internal account at the same
   // time. A global sign-out would revoke every device session; local scope
   // only clears the browser that requested the logout.
@@ -155,7 +211,7 @@ export async function loadInternalWorkspace() {
   ])
   return {
     memos: memoRows.map(mapMemo),
-    assets: await Promise.all(assetRows.map(mapAsset)),
+    assets: assetRows.map(mapAsset),
   }
 }
 
@@ -253,12 +309,19 @@ export async function persistAsset(asset) {
       const objectPath = persisted.storagePath
 
       uploadedPaths.push(objectPath)
+      const thumbnailPath = await storeAssetThumbnail({ artifact, stored: persisted }, {
+        readStoredOriginal: getAssetOriginalBlob,
+        prepareAssetThumbnail,
+        uploadBlob: (path, blob) => uploadArtifactBlob(client, path, blob),
+      })
+      if (thumbnailPath) uploadedPaths.push(thumbnailPath)
       artifacts.push({
         id: artifact.id || index + 1,
         name: storedName,
         title: artifact.title || '生成图像',
         meta: artifact.meta || 'ArchFlow 真实生成',
         storagePath: objectPath,
+        ...(thumbnailPath ? { thumbnailPath } : {}),
       })
     }
 
@@ -288,7 +351,7 @@ export async function persistAsset(asset) {
 
 export async function deletePersistentAsset(asset) {
   const client = requireClient()
-  const paths = (asset.artifacts || []).map((item) => item.storagePath).filter(Boolean)
+  const paths = (asset.artifacts || []).flatMap((item) => [item.storagePath, item.thumbnailPath]).filter(Boolean)
   if (paths.length) unwrap(await client.storage.from('user-assets').remove(paths))
   unwrap(await client.from('assets').delete().eq('id', asset.id))
 }
